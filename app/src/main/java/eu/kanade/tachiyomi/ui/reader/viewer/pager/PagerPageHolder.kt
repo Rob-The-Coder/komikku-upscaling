@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
@@ -11,6 +12,7 @@ import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -25,6 +27,7 @@ import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
 import tachiyomi.core.common.i18n.stringResource
+import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
@@ -32,6 +35,8 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.ImageDecoder
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
 /**
@@ -207,25 +212,60 @@ class PagerPageHolder(
                 }
             }
             withUIContext {
-                setImage(
-                    source,
-                    isAnimated,
-                    Config(
-                        zoomDuration = viewer.config.doubleTapAnimDuration,
-                        minimumScaleType = viewer.config.imageScaleType,
-                        cropBorders = viewer.config.imageCropBorders,
-                        zoomStartPosition = viewer.config.imageZoomType,
-                        landscapeZoom = viewer.config.landscapeZoom,
-                        // KMK -->
-                        disableZoomIn = viewer.config.disableZoomIn,
-                        doubleTapZoom = viewer.config.doubleTapZoom,
-                        landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
-                        // KMK <--
-                    ),
-                )
-                if (!isAnimated) {
-                    pageBackground = background
+                val upscalePrefs = Injekt.get<ReaderPreferences>()
+                if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
+                    val bitmap = AiUpscaleCache.getOrUpscale(page.chapter.chapter.id, page.index, source)
+                    if (bitmap != null) {
+                        setImage(BitmapDrawable(context.resources, bitmap), Config(
+                                zoomDuration = viewer.config.doubleTapAnimDuration,
+                                minimumScaleType = viewer.config.imageScaleType,
+                                cropBorders = viewer.config.imageCropBorders,
+                                zoomStartPosition = viewer.config.imageZoomType,
+                                landscapeZoom = viewer.config.landscapeZoom,
+                                // KMK -->
+                                disableZoomIn = viewer.config.disableZoomIn,
+                                doubleTapZoom = viewer.config.doubleTapZoom,
+                                landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
+                                // KMK <--
+                            )
+                        )
+                    } else {
+                        setImage(
+                            source,
+                            isAnimated,
+                            Config(
+                                zoomDuration = viewer.config.doubleTapAnimDuration,
+                                minimumScaleType = viewer.config.imageScaleType,
+                                cropBorders = viewer.config.imageCropBorders,
+                                zoomStartPosition = viewer.config.imageZoomType,
+                                landscapeZoom = viewer.config.landscapeZoom,
+                                // KMK -->
+                                disableZoomIn = viewer.config.disableZoomIn,
+                                doubleTapZoom = viewer.config.doubleTapZoom,
+                                landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
+                                // KMK <--
+                            ),
+                        )
+                    }
+                } else {
+                    setImage(
+                        source,
+                        isAnimated,
+                        Config(
+                            zoomDuration = viewer.config.doubleTapAnimDuration,
+                            minimumScaleType = viewer.config.imageScaleType,
+                            cropBorders = viewer.config.imageCropBorders,
+                            zoomStartPosition = viewer.config.imageZoomType,
+                            landscapeZoom = viewer.config.landscapeZoom,
+                            // KMK -->
+                            disableZoomIn = viewer.config.disableZoomIn,
+                            doubleTapZoom = viewer.config.doubleTapZoom,
+                            landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
+                            // KMK <--
+                        ),
+                    )
                 }
+                if (!isAnimated) pageBackground = background
                 removeErrorLayout()
             }
         } catch (e: Throwable) {

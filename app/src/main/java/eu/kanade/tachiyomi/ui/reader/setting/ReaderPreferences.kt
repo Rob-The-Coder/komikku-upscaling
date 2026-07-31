@@ -35,6 +35,8 @@ class ReaderPreferences(
 
     fun showPageNumber() = preferenceStore.getBoolean("pref_show_page_number_key", true)
 
+    fun aiUpscaleEnabled() = preferenceStore.getBoolean("pref_ai_upscale_enabled", false)
+
     fun showReadingMode() = preferenceStore.getBoolean("pref_show_reading_mode", true)
 
     fun fullscreen() = preferenceStore.getBoolean("fullscreen", true)

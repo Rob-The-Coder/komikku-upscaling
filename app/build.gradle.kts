@@ -161,6 +161,10 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    androidResources{
+        noCompress += "tflite"
+    }
 }
 
 kotlin {
@@ -335,6 +339,10 @@ dependencies {
 
     // ZXing Android Embedded
     implementation(sylibs.zxing.android.embedded)
+
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.gpu)
+    implementation(libs.tensorflow.lite.support)
 }
 
 androidComponents {

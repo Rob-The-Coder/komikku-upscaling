@@ -57,6 +57,11 @@ internal fun GeneralPage(screenModel: ReaderSettingsScreenModel) {
     }
 
     CheckboxItem(
+        label = "AI Upscaling (sperimentale)", // meglio spostarlo in una risorsa i18n seguendo il pattern MR/KMR del progetto
+        pref = screenModel.preferences.aiUpscaleEnabled(),
+    )
+
+    CheckboxItem(
         label = stringResource(MR.strings.pref_show_page_number),
         pref = screenModel.preferences.showPageNumber(),
     )

@@ -13,6 +13,8 @@ firebase-bom = "34.15.0"
 markdown = "0.39.2"
 junit = "6.0.3"
 materialKolor = "5.0.0-alpha07"
+tensorflowLite = "2.14.0"
+tensorflowLiteSupport = "0.4.4"
 
 [libraries]
 desugar = "com.android.tools:desugar_jdk_libs:2.1.5"
@@ -112,6 +114,10 @@ markdown-coil = { module = "com.mikepenz:multiplatform-markdown-renderer-coil3",
 stringSimilarity = { module = "com.aallam.similarity:string-similarity-kotlin", version = "0.1.0" }
 
 materialKolor = { module = "com.materialkolor:material-kolor", version.ref = "materialKolor" }
+
+tensorflow-lite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tensorflowLite" }
+tensorflow-lite-gpu = { module = "org.tensorflow:tensorflow-lite-gpu", version.ref = "tensorflowLite" }
+tensorflow-lite-support = { module = "org.tensorflow:tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
 
 [plugins]
 google-services = { id = "com.google.gms.google-services", version = "4.5.0" }
