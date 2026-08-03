@@ -340,9 +340,13 @@ dependencies {
     // ZXing Android Embedded
     implementation(sylibs.zxing.android.embedded)
 
-    implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.gpu)
-    implementation(libs.tensorflow.lite.support)
+    //implementation(libs.tensorflow.lite)
+    //implementation(libs.tensorflow.lite.gpu)
+    //implementation(libs.tensorflow.lite.support)
+
+    implementation(libs.litert)
+    implementation(libs.litert.gpu)
+    implementation(libs.litert.gpu.api)
 }
 
 androidComponents {

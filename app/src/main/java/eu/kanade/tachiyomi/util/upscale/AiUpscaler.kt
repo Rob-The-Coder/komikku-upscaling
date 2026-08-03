@@ -4,12 +4,16 @@ import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.util.Log
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import java.util.concurrent.Executors
 
 /**
  * Wrapper per l'inferenza TFLite di Real-ESRGAN x2, con tiling per gestire
@@ -19,20 +23,44 @@ class AiUpscaler(private val context: Application) {
 
     private val tileSize = 256
     private val overlap = 16
-    private val scale = 2
+    private val scale = 4
 
-    private val interpreter: Interpreter by lazy {
-        val options = Interpreter.Options()
-        try {
-            options.addDelegate(GpuDelegate())
-        } catch (e: Exception) {
-            options.setNumThreads(4)
+    private fun logTensorInfo(interpreter: Interpreter) {
+        val inputTensor = interpreter.getInputTensor(0)
+        val outputTensor = interpreter.getOutputTensor(0)
+        Log.d("AiUpscaler", "Input shape: ${inputTensor.shape().joinToString()}, dtype: ${inputTensor.dataType()}")
+        Log.d("AiUpscaler", "Output shape: ${outputTensor.shape().joinToString()}, dtype: ${outputTensor.dataType()}")
+    }
+
+    // Un solo thread dedicato: interpreter creato e invocato SEMPRE qui.
+    private val inferenceExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "AiUpscaler-Inference") }
+    private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
+
+    // Creata pigramente, ma la prima creazione avverrà comunque dentro
+    // inferenceDispatcher grazie a come la richiamiamo in upscale().
+    private var _interpreter: Interpreter? = null
+    private fun getOrCreateInterpreter(): Interpreter {
+        return _interpreter ?: createInterpreter(useGpu = true)
+            ?.also { _interpreter = it }
+        ?: createInterpreter(useGpu = false)!!.also { _interpreter = it }
+    }
+
+    private fun createInterpreter(useGpu: Boolean): Interpreter? {
+        return try {
+            val options = Interpreter.Options()
+            if (useGpu) {
+                options.addDelegate(GpuDelegate())
+            } else {
+                options.setNumThreads(4)
+            }
+            Interpreter(loadModelFile(), options)
+        } catch (e: Throwable) {
+            if (useGpu) null else throw e
         }
-        Interpreter(loadModelFile(), options)
     }
 
     private fun loadModelFile(): ByteBuffer {
-        val assetFileDescriptor = context.assets.openFd("realesrgan_x2_256.tflite")
+        val assetFileDescriptor = context.assets.openFd("fsmangav2_x4_256.tflite")
         FileInputStream(assetFileDescriptor.fileDescriptor).use { inputStream ->
             val fileChannel = inputStream.channel
             return fileChannel.map(
@@ -42,8 +70,7 @@ class AiUpscaler(private val context: Application) {
             )
         }
     }
-
-    fun upscale(input: Bitmap): Bitmap {
+    suspend fun upscale(input: Bitmap): Bitmap {
         val outW = input.width * scale
         val outH = input.height * scale
         val output = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
@@ -58,24 +85,23 @@ class AiUpscaler(private val context: Application) {
                 val tileH = minOf(tileSize, input.height - y)
 
                 val tile = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
-                val tileCanvas = Canvas(tile)
-                tileCanvas.drawBitmap(
+                Canvas(tile).drawBitmap(
                     input,
                     Rect(x, y, x + tileW, y + tileH),
                     Rect(0, 0, tileW, tileH),
                     null,
                 )
 
-                val upscaledTile = runInference(tile)
+                // Solo QUESTA chiamata va sul thread dedicato: preparazione tile e
+                // composizione canvas restano libere di girare in parallelo tra pagine diverse.
+                val upscaledTile = withContext(inferenceDispatcher) { runInference(tile) }
 
-                // Copia solo la porzione valida (senza il padding oltre i bordi reali)
                 canvas.drawBitmap(
                     upscaledTile,
                     Rect(0, 0, tileW * scale, tileH * scale),
                     Rect(x * scale, y * scale, (x + tileW) * scale, (y + tileH) * scale),
                     null,
                 )
-
                 tile.recycle()
                 upscaledTile.recycle()
                 x += stride
@@ -86,6 +112,10 @@ class AiUpscaler(private val context: Application) {
     }
 
     private fun runInference(tile: Bitmap): Bitmap {
+        val interpreter = getOrCreateInterpreter()
+
+        //logTensorInfo(interpreter)
+
         val inputBuffer = bitmapToByteBuffer(tile)
         val outSize = tileSize * scale
         val outputBuffer = ByteBuffer
@@ -102,23 +132,29 @@ class AiUpscaler(private val context: Application) {
             .order(ByteOrder.nativeOrder())
         val pixels = IntArray(tileSize * tileSize)
         bitmap.getPixels(pixels, 0, tileSize, 0, 0, tileSize, tileSize)
-        for (pixel in pixels) {
-            buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
-            buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
-            buffer.putFloat((pixel and 0xFF) / 255.0f)          // B
-        }
+
+        // Planare invece di interlacciato: prima tutto R, poi tutto G, poi tutto B
+        for (pixel in pixels) buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
+        for (pixel in pixels) buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
+        for (pixel in pixels) buffer.putFloat((pixel and 0xFF) / 255.0f)         // B
+
         buffer.rewind()
         return buffer
     }
 
     private fun byteBufferToBitmap(buffer: ByteBuffer, width: Int, height: Int): Bitmap {
         buffer.rewind()
+        val size = width * height
+        val rPlane = FloatArray(size) { buffer.float }
+        val gPlane = FloatArray(size) { buffer.float }
+        val bPlane = FloatArray(size) { buffer.float }
+
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(width * height)
-        for (i in pixels.indices) {
-            val r = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-            val g = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-            val b = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
+        val pixels = IntArray(size)
+        for (i in 0 until size) {
+            val r = (rPlane[i] * 255.0f).toInt().coerceIn(0, 255)
+            val g = (gPlane[i] * 255.0f).toInt().coerceIn(0, 255)
+            val b = (bPlane[i] * 255.0f).toInt().coerceIn(0, 255)
             pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)

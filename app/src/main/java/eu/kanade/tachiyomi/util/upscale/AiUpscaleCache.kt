@@ -24,21 +24,39 @@ object AiUpscaleCache {
         File(context.cacheDir, "ai_upscale_cache").apply { mkdirs() }
     }
 
-    fun getOrUpscale(chapterId: Long?, pageIndex: Int, source: BufferedSource): Bitmap? {
+    suspend fun getOrUpscale(
+        chapterId: Long?,
+        pageIndex: Int,
+        source: BufferedSource,
+        targetWidth: Int,
+    ): Bitmap? {
         val file = File(cacheDir, "${chapterId}_$pageIndex.jpg")
 
         if (file.exists()) {
             BitmapFactory.decodeFile(file.absolutePath)?.let { return it }
         }
 
-        val original = try {
+        val decoded = try {
             ImageDecoder.newInstance(source.inputStream())?.decode()
-        } catch (e: Exception) {
-            null
-        } ?: return null
+        } catch (e: Exception) { null } ?: return null
 
-        val upscaled = upscaler.upscale(original)
-        original.recycle()
+        // Downscale ALLA LARGHEZZA SCHERMO prima di upscalare — esattamente come fa Aidoku
+        val resized = if (decoded.width > targetWidth) {
+            val scale = targetWidth.toFloat() / decoded.width
+            val newHeight = (decoded.height * scale).toInt()
+            Bitmap.createScaledBitmap(decoded, targetWidth, newHeight, true).also {
+                if (it !== decoded) decoded.recycle()
+            }
+        } else {
+            decoded
+        }
+
+        val upscaled = try {
+            upscaler.upscale(resized)
+        } catch (e: OutOfMemoryError) {
+            resized
+        }
+        if (resized !== decoded && resized !== upscaled) resized.recycle()
 
         try {
             file.outputStream().use { out ->

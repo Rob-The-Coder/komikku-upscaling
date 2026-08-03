@@ -39,6 +39,8 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
+import android.util.Log
+
 /**
  * View of the ViewPager that contains a page of a chapter.
  */
@@ -214,7 +216,14 @@ class PagerPageHolder(
             withUIContext {
                 val upscalePrefs = Injekt.get<ReaderPreferences>()
                 if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
-                    val bitmap = AiUpscaleCache.getOrUpscale(page.chapter.chapter.id, page.index, source)
+                    val targetWidth = context.resources.displayMetrics.widthPixels
+                    val bitmap = try {
+                        AiUpscaleCache.getOrUpscale(page.chapter.chapter.id, page.index, source, targetWidth)
+                    } catch (e: Throwable) {
+                        Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
+                        null
+                    }
+
                     if (bitmap != null) {
                         setImage(BitmapDrawable(context.resources, bitmap), Config(
                                 zoomDuration = viewer.config.doubleTapAnimDuration,

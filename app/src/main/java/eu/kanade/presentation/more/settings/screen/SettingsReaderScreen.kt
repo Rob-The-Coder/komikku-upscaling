@@ -158,6 +158,11 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = readerPreferences.showPageNumber(),
                     title = stringResource(MR.strings.pref_show_page_number),
                 ),
+
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.aiUpscaleEnabled(),
+                    title = "AI Upscaling (sperimentale)",
+                ),
             ),
         )
     }

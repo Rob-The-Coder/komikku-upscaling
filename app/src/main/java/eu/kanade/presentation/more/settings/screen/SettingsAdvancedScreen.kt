@@ -258,6 +258,15 @@ object SettingsAdvancedScreen : SearchableSettings {
                     subtitle = stringResource(MR.strings.pref_clear_database_summary),
                     onClick = { navigator.push(ClearDatabaseScreen()) },
                 ),
+
+                Preference.PreferenceItem.TextPreference(
+                    title = "Svuota cache upscaling AI",
+                    subtitle = "Elimina le pagine già upscalate salvate su disco",
+                    onClick = {
+                        File(context.cacheDir, "ai_upscale_cache").deleteRecursively()
+                        Toast.makeText(context, "Cache upscaling svuotata", Toast.LENGTH_SHORT).show()
+                    },
+                ),
             ),
         )
     }
