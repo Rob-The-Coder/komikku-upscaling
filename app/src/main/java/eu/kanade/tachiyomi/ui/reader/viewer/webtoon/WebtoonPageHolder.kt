@@ -1,10 +1,12 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.content.res.Resources
+import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.util.Log
 import android.widget.FrameLayout
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
@@ -15,9 +17,11 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import eu.kanade.tachiyomi.util.system.dpToPx
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -34,6 +38,8 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Holder of the webtoon reader for a single page of a chapter.
@@ -199,19 +205,52 @@ class WebtoonPageHolder(
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
                 Pair(source, isAnimated)
             }
-            withUIContext {
-                frame.setImage(
-                    source,
-                    isAnimated,
-                    ReaderPageImageView.Config(
-                        zoomDuration = viewer.config.doubleTapAnimDuration,
-                        minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
-                        cropBorders =
+
+            // 1. Mostriamo SUBITO l'immagine originale sul frame per non bloccare lo scorrimento
+            frame.setImage(
+                source,
+                isAnimated,
+                ReaderPageImageView.Config(
+                    zoomDuration = viewer.config.doubleTapAnimDuration,
+                    minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
+                    cropBorders =
                         (viewer.config.imageCropBorders && viewer.isContinuous) ||
                             (viewer.config.continuousCropBorders && !viewer.isContinuous),
-                    ),
-                )
-                removeErrorLayout()
+                ),
+            )
+
+            // 2. Se l'upscaling AI è abilitato, lo elaboriamo in background senza freeze
+            val upscalePrefs = Injekt.get<ReaderPreferences>()
+            if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
+                launchIO {
+                    val targetWidth = context.resources.displayMetrics.widthPixels
+                    val upscaledSource = try {
+                        AiUpscaleCache.getOrUpscale(
+                            chapterId = page!!.chapter.chapter.id,
+                            pageIndex = page!!.index,
+                            source = source,
+                            targetWidth = targetWidth,
+                        )
+                    } catch (e: Throwable) {
+                        Log.e("AiUpscaleWebtoon", "Fallito upscaling pagina ${page!!.index}", e)
+                        null
+                    }
+
+                    // Quando l'AI completa l'inferenza, aggiorniamo il frame sulla UI Thread
+                    if (upscaledSource != null) {
+                        withUIContext {
+                            frame.setImage(
+                                upscaledSource,
+                                false,
+                                ReaderPageImageView.Config(
+                                    zoomDuration = viewer.config.doubleTapAnimDuration,
+                                    minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
+                                    cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
+                                ),
+                            )
+                        }
+                    }
+                }
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)

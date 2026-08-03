@@ -213,67 +213,47 @@ class PagerPageHolder(
                     }
                 }
             }
-            withUIContext {
-                val upscalePrefs = Injekt.get<ReaderPreferences>()
-                if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
-                    val targetWidth = context.resources.displayMetrics.widthPixels
-                    val bitmap = try {
-                        AiUpscaleCache.getOrUpscale(page.chapter.chapter.id, page.index, source, targetWidth)
-                    } catch (e: Throwable) {
-                        Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
-                        null
-                    }
 
-                    if (bitmap != null) {
-                        setImage(BitmapDrawable(context.resources, bitmap), Config(
-                                zoomDuration = viewer.config.doubleTapAnimDuration,
-                                minimumScaleType = viewer.config.imageScaleType,
-                                cropBorders = viewer.config.imageCropBorders,
-                                zoomStartPosition = viewer.config.imageZoomType,
-                                landscapeZoom = viewer.config.landscapeZoom,
-                                // KMK -->
-                                disableZoomIn = viewer.config.disableZoomIn,
-                                doubleTapZoom = viewer.config.doubleTapZoom,
-                                landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
-                                // KMK <--
-                            )
-                        )
-                    } else {
-                        setImage(
-                            source,
-                            isAnimated,
-                            Config(
-                                zoomDuration = viewer.config.doubleTapAnimDuration,
-                                minimumScaleType = viewer.config.imageScaleType,
-                                cropBorders = viewer.config.imageCropBorders,
-                                zoomStartPosition = viewer.config.imageZoomType,
-                                landscapeZoom = viewer.config.landscapeZoom,
-                                // KMK -->
-                                disableZoomIn = viewer.config.disableZoomIn,
-                                doubleTapZoom = viewer.config.doubleTapZoom,
-                                landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
-                                // KMK <--
-                            ),
-                        )
-                    }
-                } else {
-                    setImage(
-                        source,
-                        isAnimated,
-                        Config(
-                            zoomDuration = viewer.config.doubleTapAnimDuration,
-                            minimumScaleType = viewer.config.imageScaleType,
-                            cropBorders = viewer.config.imageCropBorders,
-                            zoomStartPosition = viewer.config.imageZoomType,
-                            landscapeZoom = viewer.config.landscapeZoom,
-                            // KMK -->
-                            disableZoomIn = viewer.config.disableZoomIn,
-                            doubleTapZoom = viewer.config.doubleTapZoom,
-                            landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
-                            // KMK <--
-                        ),
+            // 1. Elaborazione dello stream in background (Coroutines I/O)
+            val upscalePrefs = Injekt.get<ReaderPreferences>()
+            val upscaledSource = if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
+                val targetWidth = context.resources.displayMetrics.widthPixels
+                try {
+                    AiUpscaleCache.getOrUpscale(
+                        chapterId = page.chapter.chapter.id,
+                        pageIndex = page.index,
+                        source = source,
+                        targetWidth = targetWidth,
                     )
+                } catch (e: Throwable) {
+                    Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
+                    null
                 }
+            } else {
+                null
+            }
+
+            // Se l'upscaling è andato a buon fine usiamo lo stream upscalato, altrimenti quello originale
+            val finalSource = upscaledSource ?: source
+
+            // 2. Chiamata a setImage nel Main Thread (UI Context)
+            withUIContext {
+                setImage(
+                    finalSource,
+                    isAnimated,
+                    Config(
+                        zoomDuration = viewer.config.doubleTapAnimDuration,
+                        minimumScaleType = viewer.config.imageScaleType,
+                        cropBorders = viewer.config.imageCropBorders,
+                        zoomStartPosition = viewer.config.imageZoomType,
+                        landscapeZoom = viewer.config.landscapeZoom,
+                        // KMK -->
+                        disableZoomIn = viewer.config.disableZoomIn,
+                        doubleTapZoom = viewer.config.doubleTapZoom,
+                        landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
+                        // KMK <--
+                    ),
+                )
                 if (!isAnimated) pageBackground = background
                 removeErrorLayout()
             }

@@ -21,9 +21,9 @@ import java.util.concurrent.Executors
  */
 class AiUpscaler(private val context: Application) {
 
-    private val tileSize = 256
+    private val tileSize = 512
     private val overlap = 16
-    private val scale = 4
+    private val scale = 2
 
     private fun logTensorInfo(interpreter: Interpreter) {
         val inputTensor = interpreter.getInputTensor(0)
@@ -60,7 +60,7 @@ class AiUpscaler(private val context: Application) {
     }
 
     private fun loadModelFile(): ByteBuffer {
-        val assetFileDescriptor = context.assets.openFd("fsmangav2_x4_256.tflite")
+        val assetFileDescriptor = context.assets.openFd("realesrgan_anime_6b_x2_512.tflite")
         FileInputStream(assetFileDescriptor.fileDescriptor).use { inputStream ->
             val fileChannel = inputStream.channel
             return fileChannel.map(
@@ -130,14 +130,29 @@ class AiUpscaler(private val context: Application) {
         val buffer = ByteBuffer
             .allocateDirect(4 * tileSize * tileSize * 3)
             .order(ByteOrder.nativeOrder())
-        val pixels = IntArray(tileSize * tileSize)
-        bitmap.getPixels(pixels, 0, tileSize, 0, 0, tileSize, tileSize)
 
-        // Planare invece di interlacciato: prima tutto R, poi tutto G, poi tutto B
-        for (pixel in pixels) buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
-        for (pixel in pixels) buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
-        for (pixel in pixels) buffer.putFloat((pixel and 0xFF) / 255.0f)         // B
+        val width = bitmap.width
+        val height = bitmap.height
+        val size = width * height
+        val pixels = IntArray(size)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
 
+        // Array unico per il layout planare: [0..size-1] R, [size..2*size-1] G, [2*size..3*size-1] B
+        val floatArray = FloatArray(size * 3)
+        var rIdx = 0
+        var gIdx = size
+        var bIdx = size * 2
+        val inv255 = 1.0f / 255.0f
+
+        for (i in 0 until size) {
+            val px = pixels[i]
+            floatArray[rIdx++] = ((px shr 16) and 0xFF) * inv255
+            floatArray[gIdx++] = ((px shr 8) and 0xFF) * inv255
+            floatArray[bIdx++] = (px and 0xFF) * inv255
+        }
+
+        // Scrittura nativa ultra-veloce in memoria senza passare da buffer.putFloat() in ciclo
+        buffer.asFloatBuffer().put(floatArray)
         buffer.rewind()
         return buffer
     }

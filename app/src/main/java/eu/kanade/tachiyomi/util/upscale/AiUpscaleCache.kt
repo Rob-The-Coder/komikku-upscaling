@@ -2,8 +2,10 @@ package eu.kanade.tachiyomi.util.upscale
 
 import android.app.Application
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.util.Log
 import okio.BufferedSource
+import okio.buffer
+import okio.source
 import tachiyomi.decoder.ImageDecoder
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -29,18 +31,18 @@ object AiUpscaleCache {
         pageIndex: Int,
         source: BufferedSource,
         targetWidth: Int,
-    ): Bitmap? {
+    ): BufferedSource? {
         val file = File(cacheDir, "${chapterId}_$pageIndex.jpg")
 
+        // Se è già presente in cache, restituiamo direttamente lo stream dal file
         if (file.exists()) {
-            BitmapFactory.decodeFile(file.absolutePath)?.let { return it }
+            return file.source().buffer()
         }
 
         val decoded = try {
             ImageDecoder.newInstance(source.inputStream())?.decode()
         } catch (e: Exception) { null } ?: return null
 
-        // Downscale ALLA LARGHEZZA SCHERMO prima di upscalare — esattamente come fa Aidoku
         val resized = if (decoded.width > targetWidth) {
             val scale = targetWidth.toFloat() / decoded.width
             val newHeight = (decoded.height * scale).toInt()
@@ -51,6 +53,8 @@ object AiUpscaleCache {
             decoded
         }
 
+        Log.d("AiUpscaleCache", "Upscaling chapterId: ${chapterId}, pageIndex: ${pageIndex}")
+
         val upscaled = try {
             upscaler.upscale(resized)
         } catch (e: OutOfMemoryError) {
@@ -58,15 +62,16 @@ object AiUpscaleCache {
         }
         if (resized !== decoded && resized !== upscaled) resized.recycle()
 
-        try {
+        // Salviamo su disco in JPEG
+        return try {
             file.outputStream().use { out ->
-                upscaled.compress(Bitmap.CompressFormat.PNG, 95, out)
+                upscaled.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
-        } catch (e: Exception) {
-            // se il salvataggio fallisce va bene lo stesso, mostriamo l'immagine
-            // upscalata, semplicemente non sarà cachata
-        }
+            if (upscaled !== decoded && upscaled !== resized) upscaled.recycle()
 
-        return upscaled
+            file.source().buffer()
+        } catch (e: Exception) {
+            null
+        }
     }
 }
