@@ -40,6 +40,7 @@ import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
 import android.util.Log
+import eu.kanade.tachiyomi.util.upscale.AiUpscalePrefetcher
 
 /**
  * View of the ViewPager that contains a page of a chapter.
@@ -216,21 +217,23 @@ class PagerPageHolder(
 
             // 1. Elaborazione dello stream in background (Coroutines I/O)
             val upscalePrefs = Injekt.get<ReaderPreferences>()
-            val upscaledSource = if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
-                val targetWidth = context.resources.displayMetrics.widthPixels
-                try {
-                    AiUpscaleCache.getOrUpscale(
-                        chapterId = page.chapter.chapter.id,
-                        pageIndex = page.index,
-                        source = source,
-                        targetWidth = targetWidth,
-                    )
-                } catch (e: Throwable) {
-                    Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
+            val targetWidth = context.resources.displayMetrics.widthPixels
+            val upscaledSource = withIOContext {
+                if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
+                    try {
+                        AiUpscaleCache.getOrUpscale(
+                            chapterId = page.chapter.chapter.id,
+                            pageIndex = page.index,
+                            source = source,
+                            targetWidth = targetWidth,
+                        )
+                    } catch (e: Throwable) {
+                        Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
+                        null
+                    }
+                } else {
                     null
                 }
-            } else {
-                null
             }
 
             // Se l'upscaling è andato a buon fine usiamo lo stream upscalato, altrimenti quello originale
@@ -257,6 +260,7 @@ class PagerPageHolder(
                 if (!isAnimated) pageBackground = background
                 removeErrorLayout()
             }
+            AiUpscalePrefetcher.schedulePrefetch(page, aheadCount = 2, targetWidth)
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
             withUIContext {

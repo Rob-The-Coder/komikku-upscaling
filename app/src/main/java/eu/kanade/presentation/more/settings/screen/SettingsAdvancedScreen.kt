@@ -1,6 +1,7 @@
 package eu.kanade.presentation.more.settings.screen
 
 import android.annotation.SuppressLint
+import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.Settings
@@ -70,6 +71,8 @@ import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.upscale.AiUpscaler
+import eu.kanade.tachiyomi.util.upscale.BatchingTestUtil
 import exh.debug.SettingsDebugScreen
 import exh.log.EHLogLevel
 import exh.pref.DelegateSourcePreferences
@@ -81,6 +84,7 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.migration.Migrator.scope
 import okhttp3.Headers
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.i18n.stringResource
@@ -265,6 +269,16 @@ object SettingsAdvancedScreen : SearchableSettings {
                     onClick = {
                         File(context.cacheDir, "ai_upscale_cache").deleteRecursively()
                         Toast.makeText(context, "Cache upscaling svuotata", Toast.LENGTH_SHORT).show()
+                    },
+                ),
+
+                Preference.PreferenceItem.TextPreference(
+                    title = "Testa batch GPU",
+                    subtitle = "porcoddio vediamo se va",
+                    onClick = {
+                        scope.launch {
+                            BatchingTestUtil.runBatchingTest(context.applicationContext as Application)
+                        }
                     },
                 ),
             ),

@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.upscale.AiUpscalePrefetcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.collectLatest
@@ -200,55 +201,59 @@ class WebtoonPageHolder(
         val streamFn = page?.stream ?: return
 
         try {
-            val (source, isAnimated) = withIOContext {
-                val source = streamFn().use { process(Buffer().readFrom(it)) }
-                val isAnimated = ImageUtil.isAnimatedAndSupported(source)
-                Pair(source, isAnimated)
+            val (sourceBytes, isAnimated) = withIOContext {
+                val processed = streamFn().use { process(Buffer().readFrom(it)) }
+                val isAnimated = ImageUtil.isAnimatedAndSupported(processed)
+                val bytes = processed.use { it.readByteArray() }
+                Pair(bytes, isAnimated)
             }
 
             // 1. Mostriamo SUBITO l'immagine originale sul frame per non bloccare lo scorrimento
             frame.setImage(
-                source,
+                Buffer().write(sourceBytes),
                 isAnimated,
                 ReaderPageImageView.Config(
                     zoomDuration = viewer.config.doubleTapAnimDuration,
                     minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
-                    cropBorders =
-                        (viewer.config.imageCropBorders && viewer.isContinuous) ||
-                            (viewer.config.continuousCropBorders && !viewer.isContinuous),
+                    cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
                 ),
             )
 
-            // 2. Se l'upscaling AI è abilitato, lo elaboriamo in background senza freeze
+            val targetWidth = context.resources.displayMetrics.widthPixels
+            page?.let { AiUpscalePrefetcher.schedulePrefetch(it, aheadCount = 2, targetWidth) }
+
+            // 2. Upscaling in background, ma SENZA creare un Job scollegato:
+            // essendo una chiamata sospesa nella stessa catena strutturata di
+            // loadPageAndProcessStatus(), viene cancellata automaticamente se
+            // la holder viene riciclata o se arriva un nuovo Page.State.Ready
+            // (collectLatest cancella il blocco precedente).
             val upscalePrefs = Injekt.get<ReaderPreferences>()
             if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
-                launchIO {
-                    val targetWidth = context.resources.displayMetrics.widthPixels
-                    val upscaledSource = try {
+                val upscaledSource = withIOContext {
+                    try {
                         AiUpscaleCache.getOrUpscale(
                             chapterId = page!!.chapter.chapter.id,
                             pageIndex = page!!.index,
-                            source = source,
+                            source = Buffer().write(sourceBytes),
                             targetWidth = targetWidth,
                         )
                     } catch (e: Throwable) {
                         Log.e("AiUpscaleWebtoon", "Fallito upscaling pagina ${page!!.index}", e)
                         null
                     }
+                }
 
-                    // Quando l'AI completa l'inferenza, aggiorniamo il frame sulla UI Thread
-                    if (upscaledSource != null) {
-                        withUIContext {
-                            frame.setImage(
-                                upscaledSource,
-                                false,
-                                ReaderPageImageView.Config(
-                                    zoomDuration = viewer.config.doubleTapAnimDuration,
-                                    minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
-                                    cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
-                                ),
-                            )
-                        }
+                if (upscaledSource != null) {
+                    withUIContext {
+                        frame.setImage(
+                            upscaledSource,
+                            false,
+                            ReaderPageImageView.Config(
+                                zoomDuration = viewer.config.doubleTapAnimDuration,
+                                minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
+                                cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
+                            ),
+                        )
                     }
                 }
             }
