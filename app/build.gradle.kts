@@ -38,6 +38,10 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+        }
     }
 
     buildTypes {
@@ -164,6 +168,13 @@ android {
 
     androidResources{
         noCompress += "tflite"
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 

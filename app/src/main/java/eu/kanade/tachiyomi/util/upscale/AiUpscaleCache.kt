@@ -22,6 +22,7 @@ import java.io.File
 object AiUpscaleCache {
 
     private val context: Application by lazy { Injekt.get() }
+    //private val upscaler: NcnnUpscaler by lazy { NcnnUpscaler(context) }
     private val upscaler: AiUpscaler by lazy { AiUpscaler(context) }
     private val cacheDir: File by lazy {
         File(context.cacheDir, "ai_upscale_cache").apply { mkdirs() }
