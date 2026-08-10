@@ -2,10 +2,13 @@ package eu.kanade.tachiyomi.util.upscale
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.Shader
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
@@ -18,39 +21,38 @@ import java.nio.channels.FileChannel
 import java.util.concurrent.Executors
 
 /**
- * Wrapper per l'inferenza TFLite di Real-ESRGAN x2, con tiling per gestire
+ * Wrapper per l'inferenza TFLite di Real-ESRGAN, con tiling per gestire
  * pagine manga più grandi della dimensione di input fissa del modello.
  */
-class AiUpscaler(private val context: Application) {
-
-    private val batchSize = 3
-    private val tileSize = 384
+class AiUpscaler(private val context: Application, private val model: UpscaleModel) {
     private val overlap = 0
-    private val scale = 4
     private enum class DelegateMode { GPU, CPU }
     private enum class TensorLayout { NHWC, NCHW }
-    private val outSize = tileSize * scale
-    private val inputBuffer = ByteBuffer.allocateDirect(4 * tileSize * tileSize * 3).order(ByteOrder.nativeOrder())
-    private val outputBuffer = ByteBuffer.allocateDirect(4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
+    private val batchSize = model.batch_size
+    private val outSize get() = model.outSize
+    private val paddedTileSize get() = model.paddedTileSize
+
+//    private val inputBuffer = ByteBuffer.allocateDirect(4 * tileSize * tileSize * 3).order(ByteOrder.nativeOrder())
+//    private val outputBuffer = ByteBuffer.allocateDirect(4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
 
     // Buffer dimensionati per l'intero batch, non più per singolo tile
-    private val batchInputBuffer =
-        ByteBuffer.allocateDirect(batchSize * 4 * tileSize * tileSize * 3).order(ByteOrder.nativeOrder())
-    private val batchOutputBuffer =
-        ByteBuffer.allocateDirect(batchSize * 4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
-
-    private val inputTiles = Array(batchSize) {
-        Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
+    private val batchInputBuffer by lazy {
+        ByteBuffer.allocateDirect(batchSize * 4 * paddedTileSize * paddedTileSize * 3).order(ByteOrder.nativeOrder())
     }
-    private val inputCanvases = inputTiles.map { Canvas(it) }
+    private val batchOutputBuffer = ByteBuffer.allocateDirect(batchSize * 4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
+    private val inputTiles by lazy {
+        Array(batchSize) { Bitmap.createBitmap(paddedTileSize, paddedTileSize, Bitmap.Config.ARGB_8888) }
+    }
+    private val inputCanvases by lazy { inputTiles.map { Canvas(it) } }
 
     // Tile di output (2 istanze per batch=2)
-    private val reusableOutputTiles = Array(batchSize) {
-        Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888)
+    private val reusableOutputTiles by lazy {
+        Array(batchSize) { Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888) }
     }
     private data class TilePos(val x: Int, val y: Int)
     private lateinit var inputLayout: TensorLayout
     private lateinit var outputLayout: TensorLayout
+    private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     private fun detectLayout(shape: IntArray): TensorLayout {
         // Il canale (valore 3) è all'indice 1 in NCHW, all'indice 3 in NHWC
@@ -59,19 +61,22 @@ class AiUpscaler(private val context: Application) {
 
     // Chiamala una volta sola subito dopo la creazione dell'interpreter
     private fun detectAndCacheLayouts(interpreter: Interpreter) {
-        inputLayout = detectLayout(interpreter.getInputTensor(0).shape())
-        outputLayout = detectLayout(interpreter.getOutputTensor(0).shape())
-        Log.d("AiUpscaler", "Input layout: $inputLayout, Output layout: $outputLayout")
+        val inTensor = interpreter.getInputTensor(0)
+        val outTensor = interpreter.getOutputTensor(0)
+
+        inputLayout = detectLayout(inTensor.shape())
+        outputLayout = detectLayout(outTensor.shape())
+
+        Log.d("AiUpscaler", "Input: layout=$inputLayout")
+        Log.d("AiUpscaler", "Output: layout=$outputLayout")
     }
 
     // Un solo thread dedicato: interpreter creato e invocato SEMPRE qui.
     private val inferenceExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "AiUpscaler-Inference")
-
-//        Thread {
-//            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-//            r.run()
-//        }.apply { name = "AiUpscaler-Inference" }
+        Thread {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            r.run()
+        }.apply { name = "AiUpscaler-Inference" }
     }
     private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
 
@@ -113,7 +118,7 @@ class AiUpscaler(private val context: Application) {
     }
 
     private fun loadModelFile(): ByteBuffer {
-        val assetFileDescriptor = context.assets.openFd("realesr_animevideov3_x4_384T_B3_float32.tflite")
+        val assetFileDescriptor = context.assets.openFd(model.assetFileName)
         FileInputStream(assetFileDescriptor.fileDescriptor).use { inputStream ->
             val fileChannel = inputStream.channel
             return fileChannel.map(
@@ -126,89 +131,72 @@ class AiUpscaler(private val context: Application) {
 
     private fun collectTilePositions(input: Bitmap, step: Int): List<TilePos> {
         val positions = mutableListOf<TilePos>()
+        val contentSize = model.tileContentSize
         var y = 0
         while (true) {
-            val actualY = if (y + tileSize > input.height) maxOf(0, input.height - tileSize) else y
+            val actualY = if (y + contentSize > input.height) maxOf(0, input.height - contentSize) else y
             var x = 0
             while (true) {
-                val actualX = if (x + tileSize > input.width) maxOf(0, input.width - tileSize) else x
+                val actualX = if (x + contentSize > input.width) maxOf(0, input.width - contentSize) else x
                 positions.add(TilePos(actualX, actualY))
-                if (actualX + tileSize >= input.width) break
+                if (actualX + contentSize >= input.width) break
                 x += step
             }
-            if (actualY + tileSize >= input.height) break
+            if (actualY + contentSize >= input.height) break
             y += step
         }
         return positions
     }
-//    suspend fun upscale(input: Bitmap): Bitmap {
-//        val outW = input.width * scale
-//        val outH = input.height * scale
-//        val output = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-//        val canvas = Canvas(output)
-//
-//        val margin = overlap / 2
-//        val step = tileSize - (margin * 2)
-//
-//        val tempTile = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
-//        val tempCanvas = Canvas(tempTile)
-//
-//        var y = 0
-//        while (y < input.height) {
-//            val actualY = if (y + tileSize > input.height) maxOf(0, input.height - tileSize) else y
-//
-//            var x = 0
-//            while (x < input.width) {
-//                val actualX = if (x + tileSize > input.width) maxOf(0, input.width - tileSize) else x
-//
-//                // 1. Estrai sempre un tile nativo 256x256 ancorato
-//                tempCanvas.drawBitmap(
-//                    input,
-//                    Rect(actualX, actualY, actualX + tileSize, actualY + tileSize),
-//                    Rect(0, 0, tileSize, tileSize),
-//                    null
-//                )
-//
-//                // 2. Inferenza
-//                val upscaledTile = withContext(inferenceDispatcher) { runInference(tempTile) }
-//
-//                // 3. Calcola i margini da scartare (se siamo ai bordi assoluti dell'immagine non scartiamo il bordo esterno)
-//                val cropLeft = if (actualX == 0) 0 else margin * scale
-//                val cropTop = if (actualY == 0) 0 else margin * scale
-//                val cropRight = if (actualX + tileSize >= input.width) tileSize * scale else (tileSize - margin) * scale
-//                val cropBottom = if (actualY + tileSize >= input.height) tileSize * scale else (tileSize - margin) * scale
-//
-//                val srcRect = Rect(cropLeft, cropTop, cropRight, cropBottom)
-//
-//                // 4. Mappa le coordinate esatte sulla bitmap di output
-//                val destLeft = (actualX * scale) + cropLeft
-//                val destTop = (actualY * scale) + cropTop
-//                val destRight = (actualX * scale) + cropRight
-//                val destBottom = (actualY * scale) + cropBottom
-//
-//                val destRect = Rect(destLeft, destTop, destRight, destBottom)
-//
-//                canvas.drawBitmap(upscaledTile, srcRect, destRect, null)
-//                upscaledTile.recycle()
-//
-//                if (actualX + tileSize >= input.width) break
-//                x += step
-//            }
-//            if (actualY + tileSize >= input.height) break
-//            y += step
-//        }
-//        tempTile.recycle()
-//        return output
-//    }
+
+
+    /**
+     * Estrae in `canvas` un tile di dimensione `paddedTileSize`, con
+     * `contentX`/`contentY` come angolo del contenuto reale (non del padding).
+     * Se `model.paddingPerSide == 0` (Real-ESRGAN), comportamento invariato
+     * rispetto a prima. Se >0 (waifu2x/upconv_7), il margine attorno al
+     * contenuto è preso da pixel reali della pagina quando disponibili;
+     * ai bordi veri della pagina, dove non c'è altro contenuto, il pixel di
+     * bordo viene replicato (CLAMP) invece di lasciare area vuota o leggere
+     * fuori dai limiti della bitmap — necessario perché quei pixel non sono
+     * decorativi, la rete li userà come contesto reale per il suo campo
+     * ricettivo prima di scartarli.
+     */
+    private fun drawPaddedTile(source: Bitmap, canvas: Canvas, contentX: Int, contentY: Int) {
+        val padding = model.paddingPerSide
+        val contentSize = model.tileContentSize
+
+        if (padding == 0) {
+            canvas.drawBitmap(
+                source,
+                Rect(contentX, contentY, contentX + contentSize, contentY + contentSize),
+                Rect(0, 0, contentSize, contentSize),
+                null,
+            )
+            return
+        }
+
+        val shader = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        shader.setLocalMatrix(
+            Matrix().apply {
+                setTranslate(-(contentX - padding).toFloat(), -(contentY - padding).toFloat())
+            }
+        )
+        tilePaint.shader = shader
+        canvas.drawRect(0f, 0f, paddedTileSize.toFloat(), paddedTileSize.toFloat(), tilePaint)
+        tilePaint.shader = null
+    }
 
     suspend fun upscale(input: Bitmap): Bitmap {
+        val scale = model.scale
+        val contentSize = model.tileContentSize
+
         val outW = input.width * scale
         val outH = input.height * scale
         val output = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
 
         val margin = overlap / 2
-        val step = tileSize - (margin * 2)
+        val step = contentSize - (margin * 2)
         val positions = collectTilePositions(input, step)
 
         positions.chunked(batchSize).forEach { batch ->
@@ -217,12 +205,13 @@ class AiUpscaler(private val context: Application) {
             // Riutilizziamo le Bitmap e Canvas di input per estrarre i tile
             for (i in 0 until batchSize) {
                 val pos = if (i < realCount) batch[i] else batch.last() // Padding duplicando l'ultimo se necessario
-                inputCanvases[i].drawBitmap(
-                    input,
-                    Rect(pos.x, pos.y, pos.x + tileSize, pos.y + tileSize),
-                    Rect(0, 0, tileSize, tileSize),
-                    null
-                )
+                drawPaddedTile(input, inputCanvases[i], pos.x, pos.y)
+//                inputCanvases[i].drawBitmap(
+//                    input,
+//                    Rect(pos.x, pos.y, pos.x + tileSize, pos.y + tileSize),
+//                    Rect(0, 0, tileSize, tileSize),
+//                    null
+//                )
             }
 
             // Inferenza nativa C++
@@ -233,8 +222,8 @@ class AiUpscaler(private val context: Application) {
                 val pos = batch[i]
                 val cropLeft = if (pos.x == 0) 0 else margin * scale
                 val cropTop = if (pos.y == 0) 0 else margin * scale
-                val cropRight = if (pos.x + tileSize >= input.width) tileSize * scale else (tileSize - margin) * scale
-                val cropBottom = if (pos.y + tileSize >= input.height) tileSize * scale else (tileSize - margin) * scale
+                val cropRight = if (pos.x + contentSize >= input.width) contentSize * scale else (contentSize - margin) * scale
+                val cropBottom = if (pos.y + contentSize >= input.height) contentSize * scale else (contentSize - margin) * scale
 
                 val srcRect = Rect(cropLeft, cropTop, cropRight, cropBottom)
                 val destLeft = (pos.x * scale) + cropLeft
@@ -248,10 +237,6 @@ class AiUpscaler(private val context: Application) {
         return output
     }
 
-//    private val reusableOutputTiles = Array(batchSize) {
-//        Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888)
-//    }
-
     private fun runBatchInference(tiles: Array<Bitmap>): Array<Bitmap> {
         val activeInterpreter = interpreter
 
@@ -259,13 +244,13 @@ class AiUpscaler(private val context: Application) {
 
         // 1. Scrittura nativa C++ nei buffer
         batchInputBuffer.clear()
-        val tilePixelCount = tileSize * tileSize
+        val tilePixelCount = paddedTileSize * paddedTileSize
         for (i in tiles.indices) {
             val pixelOffset = i * tilePixelCount
             if (inputLayout == TensorLayout.NHWC) {
-                NativePixelOps.writeBitmapToBufferNHWC(tiles[i], batchInputBuffer, pixelOffset, tileSize)
+                NativePixelOps.writeBitmapToBufferNHWC(tiles[i], batchInputBuffer, pixelOffset, paddedTileSize)
             } else {
-                NativePixelOps.writeBitmapToBufferNCHW(tiles[i], batchInputBuffer, pixelOffset, tileSize)
+                NativePixelOps.writeBitmapToBufferNCHW(tiles[i], batchInputBuffer, pixelOffset, paddedTileSize)
             }
         }
         batchInputBuffer.rewind()
@@ -292,187 +277,5 @@ class AiUpscaler(private val context: Application) {
         Log.d("AiUpscaler", "Scrittura Native: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Lettura Native: ${t3 - t2}ms | Totale: ${t3 - t0}ms")
 
         return reusableOutputTiles
-
-//        val activeInterpreter = interpreter // forza lazy init + layout detection
-//
-//        batchInputBuffer.clear()
-//        tiles.forEach { tile -> writeTileToBuffer(tile, batchInputBuffer) }
-//        batchInputBuffer.rewind()
-//
-//        batchOutputBuffer.clear()
-//        val t0 = System.currentTimeMillis()
-//        activeInterpreter.run(batchInputBuffer, batchOutputBuffer)
-//        Log.d("AiUpscaler", "Batch inferenza (${tiles.size} tile): ${System.currentTimeMillis() - t0}ms")
-//        batchOutputBuffer.rewind()
-//
-//        return tiles.indices.map { readTileFromBuffer(batchOutputBuffer, outSize, outSize) }
-    }
-
-    private fun runInference(tile: Bitmap): Bitmap {
-        val activeInterpreter = interpreter
-
-        inputBuffer.clear()
-        outputBuffer.clear()
-
-        bitmapToByteBuffer(tile, inputBuffer)
-
-        val t0 = System.currentTimeMillis()
-        activeInterpreter.run(inputBuffer, outputBuffer)
-        Log.d("AiUpscaler", "Tile inferenza: ${System.currentTimeMillis() - t0}ms")
-
-        return byteBufferToBitmap(outputBuffer, outSize, outSize)
-    }
-
-    private fun bitmapToByteBuffer(bitmap: Bitmap, buffer: ByteBuffer) {
-        val pixels = IntArray(tileSize * tileSize)
-        bitmap.getPixels(pixels, 0, tileSize, 0, 0, tileSize, tileSize)
-
-        when (inputLayout) {
-            TensorLayout.NHWC -> {
-                for (pixel in pixels) {
-                    buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
-                    buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
-                    buffer.putFloat((pixel and 0xFF) / 255.0f)          // B
-                }
-            }
-            TensorLayout.NCHW -> {
-                for (c in 0 until 3) {
-                    for (pixel in pixels) {
-                        val value = when (c) {
-                            0 -> (pixel shr 16) and 0xFF
-                            1 -> (pixel shr 8) and 0xFF
-                            else -> pixel and 0xFF
-                        }
-                        buffer.putFloat(value / 255.0f)
-                    }
-                }
-            }
-        }
-        buffer.rewind()
-    }
-
-    private fun byteBufferToBitmap(buffer: ByteBuffer, width: Int, height: Int): Bitmap {
-        buffer.rewind()
-        val size = width * height
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(size)
-
-        when (outputLayout) {
-            TensorLayout.NHWC -> {
-                for (i in 0 until size) {
-                    val r = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-            TensorLayout.NCHW -> {
-                val rPlane = FloatArray(size) { buffer.float }
-                val gPlane = FloatArray(size) { buffer.float }
-                val bPlane = FloatArray(size) { buffer.float }
-                for (i in 0 until size) {
-                    val r = (rPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (gPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (bPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-        }
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-        return bitmap
-    }
-
-    // Scrive DIRETTAMENTE nella bitmap riutilizzabile passata, con accesso
-    // indicizzato assoluto al buffer — niente FloatArray temporanei intermedi.
-    private fun readTileIntoBitmap(buffer: ByteBuffer, byteOffset: Int, width: Int, height: Int, target: Bitmap) {
-        val size = width * height
-        val pixels = IntArray(size) // questo resta, serve comunque per setPixels in un colpo solo
-
-        when (outputLayout) {
-            TensorLayout.NHWC -> {
-                for (i in 0 until size) {
-                    val off = byteOffset + i * 12
-                    val r = (buffer.getFloat(off) * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (buffer.getFloat(off + 4) * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (buffer.getFloat(off + 8) * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-            TensorLayout.NCHW -> {
-                val rOff = byteOffset
-                val gOff = byteOffset + size * 4
-                val bOff = byteOffset + size * 8
-                for (i in 0 until size) {
-                    val r = (buffer.getFloat(rOff + i * 4) * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (buffer.getFloat(gOff + i * 4) * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (buffer.getFloat(bOff + i * 4) * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-        }
-        target.setPixels(pixels, 0, width, 0, 0, width, height)
-    }
-
-    // Scrive UN tile nel buffer, SENZA clear/rewind interni: la gestione del
-    // cursore è responsabilità del chiamante, dato che ora scriviamo N tile
-    // di fila nello stesso buffer prima di un unico rewind finale.
-    private fun writeTileToBuffer(bitmap: Bitmap, buffer: ByteBuffer) {
-        val pixels = IntArray(tileSize * tileSize)
-        bitmap.getPixels(pixels, 0, tileSize, 0, 0, tileSize, tileSize)
-
-        when (inputLayout) {
-            TensorLayout.NHWC -> {
-                for (pixel in pixels) {
-                    buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f)
-                    buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)
-                    buffer.putFloat((pixel and 0xFF) / 255.0f)
-                }
-            }
-            TensorLayout.NCHW -> {
-                for (c in 0 until 3) {
-                    for (pixel in pixels) {
-                        val value = when (c) {
-                            0 -> (pixel shr 16) and 0xFF
-                            1 -> (pixel shr 8) and 0xFF
-                            else -> pixel and 0xFF
-                        }
-                        buffer.putFloat(value / 255.0f)
-                    }
-                }
-            }
-        }
-    }
-
-    // Legge UN tile dal buffer condiviso, avanzando il cursore di lettura;
-    // NESSUN rewind interno, va chiamata N volte di fila dopo un unico
-    // rewind fatto una volta sola dal chiamante.
-    private fun readTileFromBuffer(buffer: ByteBuffer, width: Int, height: Int): Bitmap {
-        val size = width * height
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(size)
-
-        when (outputLayout) {
-            TensorLayout.NHWC -> {
-                for (i in 0 until size) {
-                    val r = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (buffer.float * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-            TensorLayout.NCHW -> {
-                val rPlane = FloatArray(size) { buffer.float }
-                val gPlane = FloatArray(size) { buffer.float }
-                val bPlane = FloatArray(size) { buffer.float }
-                for (i in 0 until size) {
-                    val r = (rPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (gPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (bPlane[i] * 255.0f).toInt().coerceIn(0, 255)
-                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-            }
-        }
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-        return bitmap
     }
 }

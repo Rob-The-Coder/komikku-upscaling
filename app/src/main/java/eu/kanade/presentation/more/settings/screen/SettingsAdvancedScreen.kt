@@ -71,7 +71,6 @@ import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.tachiyomi.util.upscale.AiUpscaler
 import eu.kanade.tachiyomi.util.upscale.BatchingTestUtil
 import exh.debug.SettingsDebugScreen
 import exh.log.EHLogLevel

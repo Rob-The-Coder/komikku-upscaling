@@ -220,7 +220,7 @@ class WebtoonPageHolder(
             )
 
             val targetWidth = context.resources.displayMetrics.widthPixels
-            page?.let { AiUpscalePrefetcher.schedulePrefetch(it, aheadCount = 2, targetWidth) }
+            page?.let { AiUpscalePrefetcher.schedulePrefetch(it, aheadCount = 4, targetWidth) }
 
             // 2. Upscaling in background, ma SENZA creare un Job scollegato:
             // essendo una chiamata sospesa nella stessa catena strutturata di
