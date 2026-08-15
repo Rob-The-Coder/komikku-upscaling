@@ -3,7 +3,14 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
@@ -40,7 +47,20 @@ import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
 import android.util.Log
+import android.view.PixelCopy
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.widget.FrameLayout
+import android.widget.ImageView
+import androidx.core.view.drawToBitmap
+import androidx.core.view.postDelayed
+import eu.kanade.tachiyomi.ui.reader.viewer.UpscaleStatusIndicator
+import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.upscale.AiUpscalePrefetcher
+import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * View of the ViewPager that contains a page of a chapter.
@@ -84,6 +104,9 @@ class PagerPageHolder(
      */
     private var extraLoadJob: Job? = null
 
+    private var upscaleIndicator: UpscaleStatusIndicator? = null
+    private var crossfadeOverlay: ImageView? = null
+
     init {
         loadJob = scope.launch { loadPageAndProcessStatus(1) }
         // SY -->
@@ -100,6 +123,10 @@ class PagerPageHolder(
         loadJob = null
         extraLoadJob?.cancel()
         extraLoadJob = null
+
+        upscaleIndicator?.destroy()
+        crossfadeOverlay?.animate()?.cancel()
+        crossfadeOverlay = null
     }
 
     private fun initProgressIndicator() {
@@ -111,6 +138,76 @@ class PagerPageHolder(
                 // KMK <--
             )
             addView(progressIndicator)
+        }
+    }
+
+    private fun initUpscaleIndicator() {
+        if (upscaleIndicator == null) {
+            upscaleIndicator = UpscaleStatusIndicator(context, seedColor = seedColor, debugTag = "pagina${page.index}")
+            addView(upscaleIndicator)
+        }
+    }
+
+
+    private fun crossfadeToUpscaled(newSource: BufferedSource) {
+        if (width <= 0 || height <= 0) {
+            setImage(newSource, isAnimated = false, config = buildConfig())
+            return
+        }
+
+        val locationInWindow = IntArray(2)
+        getLocationInWindow(locationInWindow)
+        val rect = Rect(
+            locationInWindow[0], locationInWindow[1],
+            locationInWindow[0] + width, locationInWindow[1] + height,
+        )
+        val snapshotBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        try {
+            PixelCopy.request(
+                viewer.activity.window,
+                rect,
+                snapshotBitmap,
+                { copyResult ->
+                    if (copyResult == PixelCopy.SUCCESS) {
+                        // Ritagliamo SEMPRE una zona fissa e generosa nell'angolo dove
+                        // vive il badge (basso-destra), indipendentemente dal suo stato
+                        // reale al momento della cattura. Non dipendiamo più dalle
+                        // coordinate esatte del badge (che cambiano larghezza tra stati,
+                        // causando il taglio visto prima) né da QUANDO catturiamo
+                        // rispetto al suo ciclo di vita — qualunque badge, in qualunque
+                        // stato, sia mai stato lì dentro, sparisce.
+                        val reservedWidthPx = 140.dpToPx
+                        val reservedHeightPx = 56.dpToPx
+                        val clearRect = Rect(
+                            width - reservedWidthPx,
+                            height - reservedHeightPx,
+                            width,
+                            height,
+                        )
+                        Canvas(snapshotBitmap).drawRect(
+                            clearRect,
+                            Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) },
+                        )
+
+                        val overlay = ImageView(context).apply {
+                            setImageBitmap(snapshotBitmap)
+                            scaleType = ImageView.ScaleType.MATRIX
+                            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+                        }
+                        addView(overlay)
+                        crossfadeOverlay = overlay
+                        upscaleIndicator?.bringToFront() // il badge reale, sempre nitido,
+                        // riempie esattamente il buco che abbiamo appena creato
+                        requestLayout()
+                        invalidate()
+                    }
+                    setImage(newSource, isAnimated = false, config = buildConfig())
+                },
+                Handler(Looper.getMainLooper()),
+            )
+        } catch (e: Throwable) {
+            setImage(newSource, isAnimated = false, config = buildConfig())
         }
     }
 
@@ -132,6 +229,7 @@ class PagerPageHolder(
                 loader.loadPage(page)
             }
             page.statusFlow.collectLatest { state ->
+                Log.d("PagerPageHolder", "statusFlow emesso per pagina ${page.index}: $state")
                 when (state) {
                     Page.State.Queue -> setQueued()
                     Page.State.LoadPage -> setLoading()
@@ -175,10 +273,23 @@ class PagerPageHolder(
         removeErrorLayout()
     }
 
+    private fun buildConfig() = Config(
+        zoomDuration = viewer.config.doubleTapAnimDuration,
+        minimumScaleType = viewer.config.imageScaleType,
+        cropBorders = viewer.config.imageCropBorders,
+        zoomStartPosition = viewer.config.imageZoomType,
+        landscapeZoom = viewer.config.landscapeZoom,
+        disableZoomIn = viewer.config.disableZoomIn,
+        doubleTapZoom = viewer.config.doubleTapZoom,
+        landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
+    )
+
     /**
      * Called when the page is ready.
      */
     private suspend fun setImage() {
+        Log.d("PagerPageHolder", "setImage() chiamata per pagina ${page.index}")
+        upscaleIndicator?.hide()
         if (extraPage == null) {
             progressIndicator?.setProgress(0)
         } else {
@@ -189,7 +300,7 @@ class PagerPageHolder(
         val streamFn2 = extraPage?.stream
 
         try {
-            val (source, isAnimated, background) = withIOContext {
+            val (itemBytes, isAnimated, background) = withIOContext {
                 streamFn().buffered(16).use { source ->
                     // SY -->
                     if (extraPage != null) {
@@ -210,57 +321,79 @@ class PagerPageHolder(
                         } else {
                             null
                         }
-                        Triple(itemSource, isAnimated, background)
+                        // Materializziamo QUI, una volta sola, mentre siamo ancora single-thread.
+                        // Da qui in poi non tocchiamo più itemSource: ogni consumatore
+                        // (display, upscaler) riceve il proprio Buffer indipendente da itemBytes.
+                        val bytes = itemSource.use { it.readByteArray() }
+                        Triple(bytes, isAnimated, background)
                     }
                 }
             }
 
-            // 1. Elaborazione dello stream in background (Coroutines I/O)
             val upscalePrefs = Injekt.get<ReaderPreferences>()
             val targetWidth = context.resources.displayMetrics.widthPixels
-            val upscaledSource = withIOContext {
-                if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
+            val upscaleEnabled = upscalePrefs.aiUpscaleEnabled().get() && !isAnimated
+
+            if (!upscaleEnabled) {
+                withUIContext {
+                    setImage(Buffer().write(itemBytes), isAnimated, buildConfig())
+                    if (!isAnimated) pageBackground = background
+                    removeErrorLayout()
+                }
+            } else {
+                val upscaleDeferred = scope.async(Dispatchers.IO) {
                     try {
                         AiUpscaleCache.getOrUpscale(
                             chapterId = page.chapter.chapter.id,
                             pageIndex = page.index,
-                            source = source,
+                            source = Buffer().write(itemBytes), // copia indipendente, sola per l'upscaler
                             targetWidth = targetWidth,
+                            priority = UpscalePriorityGate.Priority.VISIBLE
                         )
                     } catch (e: Throwable) {
                         Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
                         null
                     }
+                }
+
+                val fastResult = withTimeoutOrNull(120.milliseconds) { upscaleDeferred.await() }
+
+                if (fastResult != null) {
+                    withUIContext {
+                        setImage(fastResult, false, buildConfig())
+                        pageBackground = background
+                        removeErrorLayout()
+                        initUpscaleIndicator()
+                        upscaleIndicator?.showActive()
+                    }
                 } else {
-                    null
+                    // Caso raro: mostriamo subito la pagina grezza + badge "in corso"
+                    withUIContext {
+                        setImage(Buffer().write(itemBytes), false, buildConfig()) // copia indipendente, sola per la UI
+                        pageBackground = background
+                        removeErrorLayout()
+                        initUpscaleIndicator()
+                        upscaleIndicator?.showInProgress()
+                    }
+
+                    // Quando l'upscale finisce (anche molto dopo), swap con crossfade
+                    scope.launch {
+                        val lateResult = upscaleDeferred.await()
+                        withUIContext {
+                            if (lateResult != null) {
+                                upscaleIndicator?.showSuccess()
+                                postOnAnimation {
+                                    crossfadeToUpscaled(lateResult)
+                                }
+                            } else {
+                                upscaleIndicator?.showFailed()
+                            }
+                        }
+                    }
                 }
             }
 
-            // Se l'upscaling è andato a buon fine usiamo lo stream upscalato, altrimenti quello originale
-            val finalSource = upscaledSource ?: source
-
-            // 2. Chiamata a setImage nel Main Thread (UI Context)
-            withUIContext {
-                setImage(
-                    finalSource,
-                    isAnimated,
-                    Config(
-                        zoomDuration = viewer.config.doubleTapAnimDuration,
-                        minimumScaleType = viewer.config.imageScaleType,
-                        cropBorders = viewer.config.imageCropBorders,
-                        zoomStartPosition = viewer.config.imageZoomType,
-                        landscapeZoom = viewer.config.landscapeZoom,
-                        // KMK -->
-                        disableZoomIn = viewer.config.disableZoomIn,
-                        doubleTapZoom = viewer.config.doubleTapZoom,
-                        landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
-                        // KMK <--
-                    ),
-                )
-                if (!isAnimated) pageBackground = background
-                removeErrorLayout()
-            }
-            AiUpscalePrefetcher.schedulePrefetch(page, aheadCount = 2, targetWidth)
+            AiUpscalePrefetcher.updatePosition(page, aheadCount = Injekt.get<ReaderPreferences>().aiUpscalePrefetchAheadCount().get(), targetWidth)
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
             withUIContext {
@@ -464,8 +597,22 @@ class PagerPageHolder(
     override fun onImageLoaded() {
         super.onImageLoaded()
         progressIndicator?.hide()
-    }
+        removeErrorLayout() // difensivo: non lasciare mai un errore vecchio sopra un'immagine caricata con successo
 
+        crossfadeOverlay?.let { overlay ->
+            Log.d("UpscaleBadge", "[pagina${page.index}] crossfade: inizio dissolvenza overlay")
+            overlay.animate()
+                .alpha(0f)
+                .setDuration(250L)
+                .withEndAction {
+                    Log.d("UpscaleBadge", "[pagina${page.index}] crossfade: overlay rimosso")
+                    removeView(overlay)
+                    overlay.setImageBitmap(null)
+                }
+                .start()
+            crossfadeOverlay = null
+        }
+    }
     /**
      * Called when an image fails to decode.
      */

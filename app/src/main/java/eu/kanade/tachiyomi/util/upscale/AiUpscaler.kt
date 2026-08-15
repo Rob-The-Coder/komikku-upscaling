@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -24,13 +25,24 @@ import java.util.concurrent.Executors
  * Wrapper per l'inferenza TFLite di Real-ESRGAN, con tiling per gestire
  * pagine manga più grandi della dimensione di input fissa del modello.
  */
-class AiUpscaler(private val context: Application, private val model: UpscaleModel) {
-    private val overlap = 0
+class AiUpscaler(
+    private val context: Application,
+    private val model: UpscaleModel,
+    requestedBatchSize: Int,
+    requestedOverlap: Int,
+) {
+    private val variant = model.variantFor(requestedBatchSize)
+    private val batchSize = variant.batchSize
     private enum class DelegateMode { GPU, CPU }
     private enum class TensorLayout { NHWC, NCHW }
-    private val batchSize = model.batch_size
     private val outSize get() = model.outSize
     private val paddedTileSize get() = model.paddedTileSize
+
+    // Vincoli: overlap dispari viene troncato a pari (margin = overlap/2, divisione
+    // intera, innocuo ma silenzioso); overlap troppo grande rispetto a tileContentSize
+    // farebbe collassare `step` a zero o negativo in collectTilePositions, causando
+    // un ciclo che non avanza mai — lo evitiamo tenendolo sotto la metà del tile.
+    private val overlap = requestedOverlap.coerceIn(0, model.tileContentSize / 2 - 1).let { it - (it % 2) }
 
 //    private val inputBuffer = ByteBuffer.allocateDirect(4 * tileSize * tileSize * 3).order(ByteOrder.nativeOrder())
 //    private val outputBuffer = ByteBuffer.allocateDirect(4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
@@ -82,10 +94,22 @@ class AiUpscaler(private val context: Application, private val model: UpscaleMod
 
     // Creata pigramente, ma la prima creazione avverrà comunque dentro
     // inferenceDispatcher grazie a come la richiamiamo in upscale().
-    private val interpreter: Interpreter by lazy {
-        createInterpreter(DelegateMode.GPU)
-            ?: createInterpreter(DelegateMode.CPU)!!
+
+    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE){
+        createInterpreter(DelegateMode.GPU) ?: createInterpreter(DelegateMode.CPU)!!
     }
+
+    private val interpreter by interpreterLazy
+
+    fun close() {
+        if (interpreterLazy.isInitialized()) interpreter.close()
+        inferenceExecutor.shutdown()
+    }
+
+//    private val interpreter: Interpreter by lazy {
+//        createInterpreter(DelegateMode.GPU)
+//            ?: createInterpreter(DelegateMode.CPU)!!
+//    }
 
     private val compatList = CompatibilityList()
     private fun createInterpreter(mode: DelegateMode): Interpreter? {
@@ -107,8 +131,8 @@ class AiUpscaler(private val context: Application, private val model: UpscaleMod
             }
 
             val newInterpreter = Interpreter(loadModelFile(), options)
-            Log.d("AiUpscaler", "Creazione interprete con mode=${mode}")
             detectAndCacheLayouts(newInterpreter)
+            Log.d("AiUpscaler", "Creazione interprete con mode=${mode}, batch=${batchSize}, Shape: \${newInterpreter.getInputTensor(0).shape()}")
 
             newInterpreter
         } catch (e: Throwable) {
@@ -118,14 +142,10 @@ class AiUpscaler(private val context: Application, private val model: UpscaleMod
     }
 
     private fun loadModelFile(): ByteBuffer {
-        val assetFileDescriptor = context.assets.openFd(model.assetFileName)
-        FileInputStream(assetFileDescriptor.fileDescriptor).use { inputStream ->
+        val file = File(context.filesDir, "models/${variant.assetFileName}")
+        FileInputStream(file).use { inputStream ->
             val fileChannel = inputStream.channel
-            return fileChannel.map(
-                FileChannel.MapMode.READ_ONLY,
-                assetFileDescriptor.startOffset,
-                assetFileDescriptor.declaredLength,
-            )
+            return fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
         }
     }
 

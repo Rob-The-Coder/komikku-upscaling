@@ -18,6 +18,7 @@ materialKolor = "5.0.0-alpha07"
 #tensorflowLiteSupport = "0.4.4"
 
 litert = "1.4.2"
+material3Version = "1.4.0"
 
 [libraries]
 desugar = "com.android.tools:desugar_jdk_libs:2.1.5"
@@ -125,6 +126,7 @@ materialKolor = { module = "com.materialkolor:material-kolor", version.ref = "ma
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 litert-gpu = { module = "com.google.ai.edge.litert:litert-gpu", version.ref = "litert" }
 litert-gpu-api = { module = "com.google.ai.edge.litert:litert-gpu-api", version.ref = "litert" }
+material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3Version" }
 
 [plugins]
 google-services = { id = "com.google.gms.google-services", version = "4.5.0" }

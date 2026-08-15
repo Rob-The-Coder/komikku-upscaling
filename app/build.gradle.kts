@@ -199,6 +199,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.material3)
     implementation(projects.i18n)
     // KMK -->
     implementation(projects.i18nKmk)

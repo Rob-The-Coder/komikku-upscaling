@@ -1,5 +1,15 @@
 package eu.kanade.tachiyomi.util.upscale
 
+import dev.icerock.moko.resources.StringResource
+import tachiyomi.i18n.kmk.KMR
+
+
+data class BatchVariant(
+    val batchSize: Int,
+    val assetFileName: String,
+    // Popolati quando costruiamo il download manager (prossimo punto):
+    // val downloadUrl: String, val sha256: String, val sizeBytes: Long
+)
 /**
  * Descrive un modello di upscaling disponibile. `offset` è la quantità di
  * pixel "mangiati" dalla rete per via di convoluzioni senza padding interno
@@ -15,113 +25,85 @@ package eu.kanade.tachiyomi.util.upscale
  */
 enum class UpscaleModel(
     val displayName: String,
-    val assetFileName: String,
+    val descriptionRes: StringResource,
     val scale: Int,
-    val batch_size: Int,
     val tileContentSize: Int,
     val offset: Int,
-) {
+    val batchVariants: List<BatchVariant>,
+    ) {
     REALESRGAN_ANIMEVIDEOV3(
-        displayName = "Real-ESRGAN (animevideov3, 4x)",
-        assetFileName = "realesr_animevideov3_x4_384T_B3_float32.tflite",
+        displayName = "Real-ESRGAN (4x)",
+        descriptionRes = KMR.strings.desc_upscale_realesrgan_animevideov3,
         scale = 4,
         tileContentSize = 384,
-        batch_size = 3,
         offset = 0,
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "realesr_animevideov3_x4_384T_B1_float32.tflite"),
+            BatchVariant(batchSize = 3, assetFileName = "realesr_animevideov3_x4_384T_B3_float32.tflite")
+        )
     ),
     WAIFU2X_SCALE2X(
-        displayName = "waifu2x upconv_7 (2x, no denoise)",
-        assetFileName = "waifu2x_float32.tflite",
+        displayName = "waifu2x (2x, no denoise)",
+        descriptionRes = KMR.strings.desc_upscale_waifu2x,
         scale = 2,
         tileContentSize = 384,
-        batch_size = 1,
         offset = 28,
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "waifu2x_384T_B1_float32.tflite"),
+            BatchVariant(batchSize = 3, assetFileName = "waifu2x_384T_B3_float32.tflite"),
+        ),
     ),
-    WAIFU2X_SCALE2X_B3(
-        displayName = "waifu2x B3(2x, no denoise)",
-        assetFileName = "waifu2x_384T_B3_float32.tflite",
+    CUNET_SCALE2X(
+        displayName = "cunet (2x)",
+        descriptionRes = KMR.strings.desc_upscale_cunet2x,
         scale = 2,
         tileContentSize = 384,
-        batch_size = 3,
-        offset = 28,
-    ),
-    WAIFU2X_NOISE0_SCALE2X_B3(
-        displayName = "waifu2x (2x, denoise leggero)",
-        assetFileName = "waifu2x_noise0_384T_B3_float32.tflite",
-        scale = 2,
-        tileContentSize = 384,
-        batch_size = 3,
-        offset = 28,
-    ),
-    WAIFU2X_NOISE1_SCALE2X_B3(
-        displayName = "waifu2x (2x, denoise medio)",
-        assetFileName = "waifu2x_noise1_384T_B3_float32.tflite",
-        scale = 2,
-        tileContentSize = 384,
-        batch_size = 3,
-        offset = 28,
-    ),
-    CUNET_SCALE2X_B1(
-        displayName = "cunet2x (2x)",
-        assetFileName = "cunet2x_384T_float32.tflite",
-        scale = 2,
-        tileContentSize = 384,
-        batch_size = 1,
         offset = 72,
-    ),
-    SWIN_SCALE2X(
-        displayName = "swin2x (2x)",
-        assetFileName = "swin2x_float32.tflite",
-        scale = 2,
-        tileContentSize = 384,
-        batch_size = 1,
-        offset = 32,
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "cunet2x_384T_B1_float32.tflite")
+        ),
     ),
     REALCUGAN_SCALE2X(
-        displayName = "realcugan (2x)",
-        assetFileName = "realcugan2x_no_denoise_384T_B1_float32.tflite",
-        scale = 2,
-        tileContentSize = 384,
-        batch_size = 1,
-        offset = 72,
-    ),
-    REALCUGAN_SCALE2X_B3(
         displayName = "Real-CUGAN (2x)",
-        assetFileName = "realcugan2x_no_denoise_384T_B3_float32.tflite",
+        descriptionRes = KMR.strings.desc_upscale_realcugan2x,
         scale = 2,
         tileContentSize = 384,
-        batch_size = 3,
         offset = 72,
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "realcugan2x_no_denoise_384T_B1_float32.tflite"),
+            BatchVariant(batchSize = 3, assetFileName = "realcugan2x_no_denoise_384T_B3_float32.tflite")
+        ),
     ),
     REALCUGAN_SCALE3X(
         displayName = "Real-CUGAN (3x)",
-        assetFileName = "realcugan3x_no_denoise_384T_B1_float32.tflite",
+        descriptionRes = KMR.strings.desc_upscale_realcugan3x,
         scale = 3,
         tileContentSize = 384,
-        batch_size = 1,
         offset = 84,   // = paddingPerSide(14) × 2 × scale(3)
-    ),
-    REALCUGAN_SCALE3X_B3(
-        displayName = "Real-CUGAN (3x)",
-        assetFileName = "realcugan3x_no_denoise_384T_B3_float32.tflite",
-        scale = 3,
-        tileContentSize = 384,
-        batch_size = 3,
-        offset = 84,   // = paddingPerSide(14) × 2 × scale(3)
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "realcugan3x_no_denoise_384T_B1_float32.tflite"),
+            BatchVariant(batchSize = 3, assetFileName = "realcugan3x_no_denoise_384T_B3_float32.tflite")
+        )
     ),
     REALCUGAN_SCALE4X(
         displayName = "Real-CUGAN (4x)",
-        assetFileName = "realcugan4x_no_denoise_384T_B1_float32.tflite",
+        descriptionRes = KMR.strings.desc_upscale_realcugan4x,
         scale = 4,
         tileContentSize = 384,
-        batch_size = 1,
         offset = 152,  // = paddingPerSide(19) × 2 × scale(4)
+        batchVariants = listOf(
+            BatchVariant(batchSize = 1, assetFileName = "realcugan4x_no_denoise_384T_B1_float32.tflite")
+        ),
     ),
     ;
 
     init {
         require(offset % (2 * scale) == 0) {
-            "offset=$offset non divisibile per 2*scale=${2 * scale}: il padding per lato non sarebbe un intero, ricontrolla il valore per $name"
+            "offset ($offset) deve essere divisibile per 2*scale ($scale) in $name"
+        }
+        require(batchVariants.isNotEmpty()) { "$name deve avere almeno una variante batch" }
+        require(batchVariants.map { it.batchSize }.distinct().size == batchVariants.size) {
+            "$name ha batch size duplicati tra le varianti"
         }
     }
 
@@ -133,4 +115,12 @@ enum class UpscaleModel(
 
     /** Dimensione dell'output prodotto dal modello per un singolo tile. */
     val outSize: Int get() = scale * tileContentSize
+
+    /** Valori di batch selezionabili in UI per questo modello, ordinati. */
+    val availableBatchSizes: List<Int> get() = batchVariants.map { it.batchSize }.sorted()
+
+    /** Variante esatta se esiste, altrimenti la più vicina disponibile (mai un crash su un valore stale in preferenze). */
+    fun variantFor(requestedBatchSize: Int): BatchVariant =
+        batchVariants.find { it.batchSize == requestedBatchSize }
+            ?: batchVariants.minBy { kotlin.math.abs(it.batchSize - requestedBatchSize) }
 }
