@@ -179,6 +179,7 @@ object SettingsReaderScreen : SearchableSettings {
         val aiUpscalePrefetchAhead by aiUpscalePrefetchAheadPref.collectAsState()
         val aiUpscaleWifiOnlyPref = readerPreferences.aiUpscaleWifiOnlyDownloads()
         val aiUpscaleTileOverlapPref = readerPreferences.aiUpscaleTileOverlap()
+        val aiUpscaleTileOverlap by aiUpscaleTileOverlapPref.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(KMR.strings.pref_ai_upscale_model),
@@ -207,18 +208,19 @@ object SettingsReaderScreen : SearchableSettings {
                     enabled = aiUpscaleEnabled,
                     onValueChanged = { aiUpscalePrefetchAheadPref.set(it) },
                 ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = aiUpscaleTileOverlapPref,
-                    entries = persistentMapOf(
-                        0 to stringResource(KMR.strings.pref_ai_upscale_tile_overlap_off),
-                        16 to "16",
-                        32 to "32",
-                        48 to "48",
-                        64 to "64",
-                    ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = aiUpscaleTileOverlap,
+                    valueRange = 0..64,
+                    steps = 3, // 5 fermate: 0, 16, 32, 48, 64
                     title = stringResource(KMR.strings.pref_ai_upscale_tile_overlap),
                     subtitle = stringResource(KMR.strings.pref_ai_upscale_tile_overlap_summary),
+                    valueString = if (aiUpscaleTileOverlap == 0) {
+                        stringResource(KMR.strings.pref_ai_upscale_tile_overlap_off)
+                    } else {
+                        aiUpscaleTileOverlap.toString()
+                    },
                     enabled = aiUpscaleEnabled,
+                    onValueChanged = { aiUpscaleTileOverlapPref.set(it) },
                 ),
             ),
         )

@@ -392,8 +392,6 @@ class PagerPageHolder(
                     }
                 }
             }
-
-            AiUpscalePrefetcher.updatePosition(page, aheadCount = Injekt.get<ReaderPreferences>().aiUpscalePrefetchAheadCount().get(), targetWidth)
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
             withUIContext {

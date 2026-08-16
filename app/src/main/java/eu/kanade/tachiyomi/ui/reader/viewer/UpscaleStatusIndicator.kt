@@ -69,6 +69,7 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
     defStyleAttr: Int = 0,
     @ColorInt private val seedColor: Int? = null,
     private val debugTag: String = "?",
+    private val alpha: Float = 0.85f,
 ) : AbstractComposeView(context, attrs, defStyleAttr) {
 
     init {
@@ -105,7 +106,7 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .background(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = alpha),
                             shape = RoundedCornerShape(16.dp),
                         )
                         .padding(horizontal = 10.dp, vertical = 6.dp),

@@ -37,32 +37,59 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 object AiUpscalePrefetcher {
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("AiUpscalePrefetch", "fillLoop terminato per eccezione non gestita", throwable)
+    }
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
+
     // Dedup: evita di rilanciare decode+letura per una pagina già richiesta
     // (l'eventuale duplicato viene comunque bloccato anche a valle, nel
     // controllo file.exists() dentro AiUpscaleCache, ma qui evitiamo di
     // sprecare anche la lettura/decodifica dei byte originali).
     private val requested = ConcurrentHashMap.newKeySet<String>()
-
-    @Volatile private var currentPages: List<ReaderPage>? = null
+    @Volatile private var currentChapterPages: List<ReaderPage>? = null
+    @Volatile private var nextChapterProvider: (() -> List<ReaderPage>?)? = null
     @Volatile private var currentIndex: Int = -1
     @Volatile private var aheadCount: Int = 2
+    @Volatile private var alreadyCoveredAhead: Int = 0
     @Volatile private var targetWidth: Int = 0
     private var fillJob: Job? = null
 
+    /**
+     * Restituisce la pagina all'offset richiesto rispetto alla posizione corrente,
+     * attraversando il confine di capitolo se necessario. Se l'offset ricade nel
+     * prossimo capitolo ma questo non è ancora caricato (pages == null), ritorna
+     * null: il chiamante la riproverà al giro successivo del loop, non è un
+     * fallimento definitivo.
+     */
+    private fun pageAtOffset(offset: Int): ReaderPage? {
+        val curPages = currentChapterPages ?: return null
+        val idx = currentIndex + offset
+        if (idx < curPages.size) return curPages.getOrNull(idx)
+
+        val overflow = idx - curPages.size
+        val nextPages = nextChapterProvider?.invoke() ?: return null
+        return nextPages.getOrNull(overflow)
+    }
     private suspend fun tryFillNextGap(): Boolean {
-        val pages = currentPages ?: run {
-            Log.d("AiUpscalePrefetch", "tryFillNextGap: currentPages è null")
-            return false
-        }
-        val loader = pages.firstOrNull()?.chapter?.pageLoader ?: run {
-            Log.d("AiUpscalePrefetch", "tryFillNextGap: pageLoader è null")
+        if (currentChapterPages == null) {
+            Log.d("AiUpscalePrefetch", "tryFillNextGap: currentChapterPages è null")
             return false
         }
 
-        for (offset in 1..aheadCount) {
-            val nextPage = pages.getOrNull(currentIndex + offset) ?: continue
+        val startOffset = alreadyCoveredAhead + 1
+        if (startOffset > aheadCount) return false
+
+        for (offset in startOffset..aheadCount) {
+            val nextPage = pageAtOffset(offset) ?: continue
             val key = "${nextPage.chapter.chapter.id}_${nextPage.index}"
-            if (requested.contains(key)) {
+            if (requested.contains(key)) continue
+
+            // Risolto per-pagina, non una volta per l'intera finestra: pagine oltre
+            // il confine di capitolo appartengono a un pageLoader diverso.
+            val loader = nextPage.chapter.pageLoader
+            if (loader == null) {
+                Log.d("AiUpscalePrefetch", "offset=$offset pagina ${nextPage.index}: pageLoader non ancora pronto (capitolo non avviato)")
                 continue
             }
 
@@ -73,11 +100,9 @@ object AiUpscalePrefetcher {
                     } catch (e: Throwable) {
                         Log.w("AiUpscalePrefetch", "loadPage fallita per pagina ${nextPage.index}", e)
                     }
-                }   // fire-and-forget vero: lanciato nello scope di lunga durata del prefetcher,
-                    // MAI atteso/joinato da questa funzione — esattamente come richiede il commento
-                    // in PageLoader.kt ("should be launched asynchronously")
+                }
 
-                val readyState = withTimeoutOrNull(2_000.milliseconds) {
+                val readyState = withTimeoutOrNull(15_000.milliseconds) {
                     nextPage.statusFlow.first { it is Page.State.Ready || it is Page.State.Error }
                 }
 
@@ -114,12 +139,6 @@ object AiUpscalePrefetcher {
         Log.d("AiUpscalePrefetch", "nessuna pagina processabile in questo giro (currentIndex=$currentIndex, aheadCount=$aheadCount)")
         return false
     }
-
-    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        Log.e("AiUpscalePrefetch", "fillLoop terminato per eccezione non gestita", throwable)
-    }
-    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
-
     private suspend fun fillLoop() {
         Log.d("AiUpscalePrefetch", "fillLoop avviato")
         while (currentCoroutineContext().isActive) {
@@ -141,20 +160,27 @@ object AiUpscalePrefetcher {
      * prefetch di N pagine come prima: aggiorna solo lo stato che il loop
      * continuo (avviato una volta sola) legge ad ogni iterazione. Chiamare
      * ad ogni cambio pagina, non solo alla prima.
+     * @param nextChapterProvider fornisce le pagine del capitolo successivo, se
+     * disponibili. Passato come lambda (non come lista già risolta) perché il
+     * capitolo potrebbe non essere ancora caricato al momento di questa chiamata
+     * ma diventarlo mentre il loop continua a girare — la lambda viene rivalutata
+     * ad ogni tentativo, non catturata una volta sola.
      */
     fun updatePosition(
         current: ReaderPage,
         aheadCount: Int,
         targetWidth: Int,
+        alreadyCoveredAhead: Int = 0,
+        nextChapterProvider: () -> List<ReaderPage>? = { null },
     ) {
         val upscalePrefs = Injekt.get<ReaderPreferences>()
-        val enabled = upscalePrefs.aiUpscaleEnabled().get()
-        Log.d("AiUpscalePrefetch", "updatePosition chiamato: enabled=$enabled, index=${current.index}, fillJob.isActive=${fillJob?.isActive}")
-        if (!enabled) return
+        if (!upscalePrefs.aiUpscaleEnabled().get()) return
 
-        currentPages = current.chapter.pages
+        currentChapterPages = current.chapter.pages
+        this.nextChapterProvider = nextChapterProvider
         currentIndex = current.index
         this.aheadCount = aheadCount
+        this.alreadyCoveredAhead = alreadyCoveredAhead
         this.targetWidth = targetWidth
 
         if (fillJob?.isActive != true) {
@@ -168,7 +194,8 @@ object AiUpscalePrefetcher {
         requested.clear()
         fillJob?.cancel()
         fillJob = null
-        currentPages = null
+        currentChapterPages = null
+        nextChapterProvider = null
         currentIndex = -1
     }
 }

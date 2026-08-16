@@ -104,7 +104,7 @@ class WebtoonPageHolder(
 
     private fun initUpscaleIndicator() {
         if (upscaleIndicator == null) {
-            upscaleIndicator = UpscaleStatusIndicator(context, seedColor = seedColor)
+            upscaleIndicator = UpscaleStatusIndicator(context, seedColor = seedColor, alpha = 0.40f)
             frame.addView(upscaleIndicator)
         }
     }
@@ -235,9 +235,6 @@ class WebtoonPageHolder(
             )
 
             val targetWidth = context.resources.displayMetrics.widthPixels
-            val prefetchAhead = Injekt.get<ReaderPreferences>().aiUpscalePrefetchAheadCount().get()
-            page?.let { AiUpscalePrefetcher.updatePosition(it, aheadCount = prefetchAhead, targetWidth) }
-            Log.d("AiUpscaler", "Prefetch: ${Injekt.get<ReaderPreferences>().aiUpscalePrefetchAheadCount().get()}")
 
             // 2. Upscaling in background, ma SENZA creare un Job scollegato:
             // essendo una chiamata sospesa nella stessa catena strutturata di
