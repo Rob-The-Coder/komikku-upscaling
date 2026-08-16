@@ -38,6 +38,7 @@
     <string name="scale_type_20_9">20:9</string>
     <string name="scale_type_4_3">4:3</string>
     <string name="scale_type_3_2">3:2</string>
+    <string name="pref_category_upscaling">Upscaling</string>
     <string name="pref_ai_upscale_model">Upscaling Model</string>
     <string name="pref_ai_upscale_enabled">Ai upscaling (experimental)</string>
     <string name="pref_ai_upscale_manage_in_settings">Manage models directly from reader settings</string>
@@ -59,6 +60,9 @@
     <string name="pref_ai_upscale_tile_overlap_summary">Higher values reduce visible joints between tiles but increase required time and memory</string>
     <string name="pref_ai_upscale_tile_overlap_off">Disabled</string>
     <string name="upscale_badge_failed">Upscaling failed</string>
+    <string name="pref_empty_ai_cache">Empty AI upscaling cache</string>
+    <string name="pref_empty_ai_cache_summary">Delete upscaled pages from disk</string>
+    <string name="emptied_ai_cache">Emptied AI upscaling cache</string>
     <!-- Preferences -->
       <!-- Appearance section -->
     <string name="pref_custom_theme_style">Custom theme style</string>

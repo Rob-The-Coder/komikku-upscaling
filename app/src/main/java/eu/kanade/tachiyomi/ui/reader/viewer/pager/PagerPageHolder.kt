@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
-import android.graphics.drawable.BitmapDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
@@ -51,15 +50,13 @@ import android.view.PixelCopy
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
 import android.widget.ImageView
-import androidx.core.view.drawToBitmap
-import androidx.core.view.postDelayed
 import eu.kanade.tachiyomi.ui.reader.viewer.UpscaleStatusIndicator
 import eu.kanade.tachiyomi.util.system.dpToPx
-import eu.kanade.tachiyomi.util.upscale.AiUpscalePrefetcher
 import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
+import eu.kanade.tachiyomi.BuildConfig
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -229,7 +226,7 @@ class PagerPageHolder(
                 loader.loadPage(page)
             }
             page.statusFlow.collectLatest { state ->
-                Log.d("PagerPageHolder", "statusFlow emesso per pagina ${page.index}: $state")
+                if (BuildConfig.DEBUG) Log.d("PagerPageHolder", "statusFlow issued for page ${page.index}: $state")
                 when (state) {
                     Page.State.Queue -> setQueued()
                     Page.State.LoadPage -> setLoading()
@@ -288,7 +285,7 @@ class PagerPageHolder(
      * Called when the page is ready.
      */
     private suspend fun setImage() {
-        Log.d("PagerPageHolder", "setImage() chiamata per pagina ${page.index}")
+        if (BuildConfig.DEBUG) Log.d("PagerPageHolder", "setImage() called for page ${page.index}")
         upscaleIndicator?.hide()
         if (extraPage == null) {
             progressIndicator?.setProgress(0)
@@ -351,7 +348,7 @@ class PagerPageHolder(
                             priority = UpscalePriorityGate.Priority.VISIBLE
                         )
                     } catch (e: Throwable) {
-                        Log.e("AiUpscale", "Fallito upscaling pagina ${page.index}", e)
+                        if (BuildConfig.DEBUG) Log.e("AiUpscale", "Upscaling failed for page ${page.index}", e)
                         null
                     }
                 }
@@ -598,12 +595,12 @@ class PagerPageHolder(
         removeErrorLayout() // difensivo: non lasciare mai un errore vecchio sopra un'immagine caricata con successo
 
         crossfadeOverlay?.let { overlay ->
-            Log.d("UpscaleBadge", "[pagina${page.index}] crossfade: inizio dissolvenza overlay")
+            if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[page${page.index}] crossfade: beginning fade overlay")
             overlay.animate()
                 .alpha(0f)
                 .setDuration(250L)
                 .withEndAction {
-                    Log.d("UpscaleBadge", "[pagina${page.index}] crossfade: overlay rimosso")
+                    if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[page${page.index}] crossfade: overlay removed")
                     removeView(overlay)
                     overlay.setImageBitmap(null)
                 }

@@ -182,6 +182,7 @@
     <string name="scale_type_20_9">20:9</string>
     <string name="scale_type_4_3">4:3</string>
     <string name="scale_type_3_2">3:2</string>
+    <string name="pref_category_upscaling">Upscaling</string>
     <string name="pref_ai_upscale_model">Modello upscaling</string>
     <string name="pref_ai_upscale_enabled">Ai upscaling (sperimentale)</string>
     <string name="pref_ai_upscale_manage_in_settings">Gestisci i modelli direttamente dalle impostazioni del lettore</string>
@@ -203,6 +204,9 @@
     <string name="pref_ai_upscale_tile_overlap_summary">Valori più alti riducono le giunture visibili tra tile ma aumentano tempo e memoria richiesti</string>
     <string name="pref_ai_upscale_tile_overlap_off">Disattivata</string>
     <string name="upscale_badge_failed">Upscaling non riuscito</string>
+    <string name="pref_empty_ai_cache">Empty AI upscaling cache</string>
+    <string name="pref_empty_ai_cache_summary">Delete upscaled pages from disk</string>
+    <string name="emptied_ai_cache">Cache upscaling svuotata</string>
     <string name="pref_top_align_cover_summary">Mostra copertina allineata in alto accanto alle informazioni sul manga</string>
     <string name="theme_doom">Doom</string>
     <string name="pref_library_filter_categories_details">Le voci nelle categorie escluse non verranno mostrate anche se presenti nelle categorie incluse.</string>

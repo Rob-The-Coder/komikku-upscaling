@@ -182,7 +182,7 @@ object SettingsReaderScreen : SearchableSettings {
         val aiUpscaleTileOverlap by aiUpscaleTileOverlapPref.collectAsState()
 
         return Preference.PreferenceGroup(
-            title = stringResource(KMR.strings.pref_ai_upscale_model),
+            title = stringResource(KMR.strings.pref_category_upscaling),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.SwitchPreference(
                     preference = aiUpscaleEnabledPref,

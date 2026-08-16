@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Shader
 import android.util.Log
+import eu.kanade.tachiyomi.BuildConfig
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
@@ -44,9 +45,6 @@ class AiUpscaler(
     // un ciclo che non avanza mai — lo evitiamo tenendolo sotto la metà del tile.
     private val overlap = requestedOverlap.coerceIn(0, model.tileContentSize / 2 - 1).let { it - (it % 2) }
 
-//    private val inputBuffer = ByteBuffer.allocateDirect(4 * tileSize * tileSize * 3).order(ByteOrder.nativeOrder())
-//    private val outputBuffer = ByteBuffer.allocateDirect(4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
-
     // Buffer dimensionati per l'intero batch, non più per singolo tile
     private val batchInputBuffer by lazy {
         ByteBuffer.allocateDirect(batchSize * 4 * paddedTileSize * paddedTileSize * 3).order(ByteOrder.nativeOrder())
@@ -79,8 +77,8 @@ class AiUpscaler(
         inputLayout = detectLayout(inTensor.shape())
         outputLayout = detectLayout(outTensor.shape())
 
-        Log.d("AiUpscaler", "Input: layout=$inputLayout")
-        Log.d("AiUpscaler", "Output: layout=$outputLayout")
+        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Input: layout=$inputLayout")
+        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Output: layout=$outputLayout")
     }
 
     // Un solo thread dedicato: interpreter creato e invocato SEMPRE qui.
@@ -106,11 +104,6 @@ class AiUpscaler(
         inferenceExecutor.shutdown()
     }
 
-//    private val interpreter: Interpreter by lazy {
-//        createInterpreter(DelegateMode.GPU)
-//            ?: createInterpreter(DelegateMode.CPU)!!
-//    }
-
     private val compatList = CompatibilityList()
     private fun createInterpreter(mode: DelegateMode): Interpreter? {
         // Per il GPU, controlliamo prima la compatibility list ufficiale:
@@ -132,11 +125,11 @@ class AiUpscaler(
 
             val newInterpreter = Interpreter(loadModelFile(), options)
             detectAndCacheLayouts(newInterpreter)
-            Log.d("AiUpscaler", "Creazione interprete con mode=${mode}, batch=${batchSize}, Shape: \${newInterpreter.getInputTensor(0).shape()}")
+            if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Interpreter created with mode=${mode}, batch=${batchSize}, Shape: ${newInterpreter.getInputTensor(0).shape()}")
 
             newInterpreter
         } catch (e: Throwable) {
-            Log.w("AiUpscaler", "Creazione interprete GPU fallita", e)
+            Log.w("AiUpscaler", "GPU interpret creation failed", e)
             if (mode == DelegateMode.CPU) throw e else null
         }
     }
@@ -226,12 +219,6 @@ class AiUpscaler(
             for (i in 0 until batchSize) {
                 val pos = if (i < realCount) batch[i] else batch.last() // Padding duplicando l'ultimo se necessario
                 drawPaddedTile(input, inputCanvases[i], pos.x, pos.y)
-//                inputCanvases[i].drawBitmap(
-//                    input,
-//                    Rect(pos.x, pos.y, pos.x + tileSize, pos.y + tileSize),
-//                    Rect(0, 0, tileSize, tileSize),
-//                    null
-//                )
             }
 
             // Inferenza nativa C++
@@ -294,7 +281,7 @@ class AiUpscaler(
         }
         val t3 = System.currentTimeMillis()
 
-        Log.d("AiUpscaler", "Scrittura Native: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Lettura Native: ${t3 - t2}ms | Totale: ${t3 - t0}ms")
+        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Native write: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
 
         return reusableOutputTiles
     }

@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.theme.TachiyomiTheme
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.util.system.dpToPx
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,7 +86,7 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
     private var autoDismissJob: Job? = null
 
     private fun setState(newState: UpscaleBadgeState, caller: String) {
-        Log.d("UpscaleBadge", "[$debugTag] stato: $state -> $newState (chiamato da $caller)")
+        if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[$debugTag] state: $state -> $newState (called by $caller)")
         state = newState
     }
 
@@ -148,18 +149,15 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
 
     fun showInProgress() {
         autoDismissJob?.cancel()
-        //state = UpscaleBadgeState.InProgress
         setState(UpscaleBadgeState.InProgress, "showInProgress")
 
     }
 
     fun showSuccess(autoDismissMillis: Long = 1500) {
         autoDismissJob?.cancel()
-        //state = UpscaleBadgeState.Success
         setState(UpscaleBadgeState.Success, "showSuccess")
         autoDismissJob = scope.launch {
             delay(autoDismissMillis.milliseconds)
-            //state = UpscaleBadgeState.Active // non torna Hidden: resta il simbolo permanente
             setState(UpscaleBadgeState.Active, "showSuccess/autoDismiss")
         }
     }
@@ -178,14 +176,12 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
     fun showActive() {
         // Percorso rapido (prefetch già pronto): nessun flash, il simbolo compare direttamente.
         autoDismissJob?.cancel()
-        //state = UpscaleBadgeState.Active
         setState(UpscaleBadgeState.Active, "showActive")
     }
 
     fun hide() {
         autoDismissJob?.cancel()
         setState(UpscaleBadgeState.Hidden, "hide")
-        //state = UpscaleBadgeState.Hidden
     }
 
     fun destroy() {
