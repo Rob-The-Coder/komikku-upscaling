@@ -204,9 +204,11 @@
     <string name="pref_ai_upscale_tile_overlap_summary">Valori più alti riducono le giunture visibili tra tile ma aumentano tempo e memoria richiesti</string>
     <string name="pref_ai_upscale_tile_overlap_off">Disattivata</string>
     <string name="upscale_badge_failed">Upscaling non riuscito</string>
-    <string name="pref_empty_ai_cache">Empty AI upscaling cache</string>
-    <string name="pref_empty_ai_cache_summary">Delete upscaled pages from disk</string>
+    <string name="pref_empty_ai_cache">Svuota cache upscaling AI</string>
+    <string name="pref_empty_ai_cache_summary">Cancella le pagine ingrandite dal disco</string>
     <string name="emptied_ai_cache">Cache upscaling svuotata</string>
+    <string name="pref_ai_upscale_cache_size">Dimensione cache upscaling AI</string>
+    <string name="pref_ai_upscale_cache_size_summary">Spazio massimo su disco usato per salvare le pagine già migliorate</string>
     <string name="pref_top_align_cover_summary">Mostra copertina allineata in alto accanto alle informazioni sul manga</string>
     <string name="theme_doom">Doom</string>
     <string name="pref_library_filter_categories_details">Le voci nelle categorie escluse non verranno mostrate anche se presenti nelle categorie incluse.</string>

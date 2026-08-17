@@ -222,6 +222,23 @@ object SettingsReaderScreen : SearchableSettings {
                     enabled = aiUpscaleEnabled,
                     onValueChanged = { aiUpscaleTileOverlapPref.set(it) },
                 ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.aiUpscaleCacheSize(),
+                    title = stringResource(KMR.strings.pref_ai_upscale_cache_size),
+                    subtitle = stringResource(KMR.strings.pref_ai_upscale_cache_size_summary),
+                    enabled = aiUpscaleEnabled,
+                    entries = persistentMapOf(
+                        50 to "50 MB",
+                        100 to "100 MB",
+                        200 to "200 MB",
+                        350 to "350 MB",
+                        500 to "500 MB",
+                        750 to "750 MB",
+                        1000 to "1 GB",
+                        1500 to "1.5 GB",
+                        2000 to "2 GB",
+                    ),
+                ),
             ),
         )
     }

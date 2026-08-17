@@ -223,7 +223,7 @@ class WebtoonPageHolder(
                 Pair(bytes, isAnimated)
             }
 
-            // 1. Mostriamo SUBITO l'immagine originale sul frame per non bloccare lo scorrimento
+            // Showing the original image to avoid blocking scrolling
             frame.setImage(
                 Buffer().write(sourceBytes),
                 isAnimated,
@@ -236,11 +236,7 @@ class WebtoonPageHolder(
 
             val targetWidth = context.resources.displayMetrics.widthPixels
 
-            // 2. Upscaling in background, ma SENZA creare un Job scollegato:
-            // essendo una chiamata sospesa nella stessa catena strutturata di
-            // loadPageAndProcessStatus(), viene cancellata automaticamente se
-            // la holder viene riciclata o se arriva un nuovo Page.State.Ready
-            // (collectLatest cancella il blocco precedente).
+            // background upscaling in background
             val upscalePrefs = Injekt.get<ReaderPreferences>()
             if (upscalePrefs.aiUpscaleEnabled().get() && !isAnimated) {
                 initUpscaleIndicator()
@@ -272,7 +268,7 @@ class WebtoonPageHolder(
                     }
                 } else {
                     withUIContext {
-                        upscaleIndicator?.showFailed() // prima: nessun feedback in caso di fallimento
+                        upscaleIndicator?.showFailed()
                     }
                 }
             }

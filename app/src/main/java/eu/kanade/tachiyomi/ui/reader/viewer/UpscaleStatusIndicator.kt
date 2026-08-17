@@ -58,11 +58,8 @@ private sealed interface UpscaleBadgeState {
 }
 
 /**
- * Badge compatto in basso a destra per segnalare l'upscaling AI in corso o appena
- * completato. Non sostituisce ReaderProgressIndicator: quello copre il caricamento
- * iniziale della pagina (download/decode), questo copre solo il passaggio successivo,
- * facoltativo, dell'upscaling — e a differenza di quello resta accanto all'immagine
- * già visibile invece di occupare tutto lo spazio.
+ * Compact badge at bottom right to report AI upscaling in progress or just
+ * completed.
  */
 class UpscaleStatusIndicator @JvmOverloads constructor(
     context: Context,
@@ -134,7 +131,7 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
                                     UpscaleBadgeState.InProgress -> KMR.strings.upscale_badge_in_progress
                                     UpscaleBadgeState.Success -> KMR.strings.upscale_badge_done
                                     UpscaleBadgeState.Failed -> KMR.strings.upscale_badge_failed
-                                    else -> KMR.strings.upscale_badge_in_progress // irraggiungibile
+                                    else -> KMR.strings.upscale_badge_in_progress
                                 },
                             ),
                             style = MaterialTheme.typography.labelSmall,
@@ -164,17 +161,14 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
 
     fun showFailed(autoDismissMillis: Long = 2000) {
         autoDismissJob?.cancel()
-        //state = UpscaleBadgeState.Failed
         setState(UpscaleBadgeState.Failed, "showFailed")
         autoDismissJob = scope.launch {
             delay(autoDismissMillis.milliseconds)
-            //state = UpscaleBadgeState.Hidden // qui invece sì Hidden: la pagina non è stata upscalata
             setState(UpscaleBadgeState.Hidden, "showFailed/autoDismiss")
         }
     }
 
     fun showActive() {
-        // Percorso rapido (prefetch già pronto): nessun flash, il simbolo compare direttamente.
         autoDismissJob?.cancel()
         setState(UpscaleBadgeState.Active, "showActive")
     }

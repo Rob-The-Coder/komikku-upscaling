@@ -45,6 +45,7 @@ class ReaderPreferences(
     fun aiUpscaleWifiOnlyDownloads() = preferenceStore.getBoolean("pref_ai_upscale_wifi_only", true)
     fun aiUpscalePrefetchAheadCount() = preferenceStore.getInt("pref_ai_upscale_prefetch_ahead", 4)
     fun aiUpscaleTileOverlap() = preferenceStore.getInt("pref_ai_upscale_tile_overlap", 0)
+    fun aiUpscaleCacheSize() = preferenceStore.getInt("pref_ai_upscale_cache_size_mb", 350)
     fun showReadingMode() = preferenceStore.getBoolean("pref_show_reading_mode", true)
 
     fun fullscreen() = preferenceStore.getBoolean("fullscreen", true)

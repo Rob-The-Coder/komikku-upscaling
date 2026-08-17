@@ -108,9 +108,6 @@ class UpscaleModelSelectionScreen : Screen() {
                         },
                         supportingContent = { Text("Batch ${variant.batchSize} · ${sizeMb?.let { "%.1f MB".format(it) } ?: "—"}") },
                         leadingContent = {
-                            // Radio, non checkmark: il checkmark ora appartiene solo all'indicatore
-                            // di download riusato (ChapterDownloadIndicator), per non avere due
-                            // spunte con significato diverso nella stessa riga.
                             if (downloadState is ModelDownloadState.Downloaded) {
                                 IconButton(onClick = {
                                     readerPreferences.aiUpscaleModel().set(variant.model)
@@ -136,7 +133,6 @@ class UpscaleModelSelectionScreen : Screen() {
                                     onClick = {
                                         if (isSelected) {
                                             context.toast(KMR.strings.pref_ai_upscale_cannot_delete_active_model)
-                                            // es. "Non puoi eliminare il modello attualmente in uso. Selezionane un altro prima."
                                         } else {
                                             downloadManager.deleteDownloaded(variant.model, variant.batchSize)
                                         }
@@ -158,7 +154,7 @@ class UpscaleModelSelectionScreen : Screen() {
                                                 downloadManager.enqueueDownload(variant.model, variant.batchSize, wifiOnly)
                                             ChapterDownloadAction.CANCEL ->
                                                 downloadManager.cancelDownload(variant.model, variant.batchSize)
-                                            ChapterDownloadAction.DELETE -> Unit // irraggiungibile: questo branch non vede mai lo stato Downloaded
+                                            ChapterDownloadAction.DELETE -> Unit
                                         }
                                     },
                                 )

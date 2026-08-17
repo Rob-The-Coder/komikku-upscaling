@@ -39,13 +39,14 @@ class AiUpscaler(
     private val outSize get() = model.outSize
     private val paddedTileSize get() = model.paddedTileSize
 
-    // Vincoli: overlap dispari viene troncato a pari (margin = overlap/2, divisione
-    // intera, innocuo ma silenzioso); overlap troppo grande rispetto a tileContentSize
-    // farebbe collassare `step` a zero o negativo in collectTilePositions, causando
-    // un ciclo che non avanza mai — lo evitiamo tenendolo sotto la metà del tile.
+    /*
+    Constraints: Odd overlap is truncated to even (margin = overlap/2);
+    overlap too large compared to tileContentSize would cause 'step' to collapse to zero or negative in collectTilePositions(),
+    causing a loop that never advances. We avoid it by keeping it under the middle of the tile.
+     */
     private val overlap = requestedOverlap.coerceIn(0, model.tileContentSize / 2 - 1).let { it - (it % 2) }
 
-    // Buffer dimensionati per l'intero batch, non più per singolo tile
+    // Buffers sized for the whole batch, not per single tile
     private val batchInputBuffer by lazy {
         ByteBuffer.allocateDirect(batchSize * 4 * paddedTileSize * paddedTileSize * 3).order(ByteOrder.nativeOrder())
     }
@@ -54,8 +55,6 @@ class AiUpscaler(
         Array(batchSize) { Bitmap.createBitmap(paddedTileSize, paddedTileSize, Bitmap.Config.ARGB_8888) }
     }
     private val inputCanvases by lazy { inputTiles.map { Canvas(it) } }
-
-    // Tile di output (2 istanze per batch=2)
     private val reusableOutputTiles by lazy {
         Array(batchSize) { Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888) }
     }
@@ -64,12 +63,22 @@ class AiUpscaler(
     private lateinit var outputLayout: TensorLayout
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+    // Single dedicated thread: interpreter always created and invoked here
+    private val inferenceExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            r.run()
+        }.apply { name = "AiUpscaler-Inference" }
+    }
+    private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
+    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE){
+        createInterpreter(DelegateMode.GPU) ?: createInterpreter(DelegateMode.CPU)!!
+    }
+    private val interpreter by interpreterLazy
     private fun detectLayout(shape: IntArray): TensorLayout {
-        // Il canale (valore 3) è all'indice 1 in NCHW, all'indice 3 in NHWC
+        // Channel with value 3 is at index 1 for NCHW, at index 3 for NHWC
         return if (shape[1] == 3) TensorLayout.NCHW else TensorLayout.NHWC
     }
-
-    // Chiamala una volta sola subito dopo la creazione dell'interpreter
     private fun detectAndCacheLayouts(interpreter: Interpreter) {
         val inTensor = interpreter.getInputTensor(0)
         val outTensor = interpreter.getOutputTensor(0)
@@ -80,35 +89,13 @@ class AiUpscaler(
         if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Input: layout=$inputLayout")
         if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Output: layout=$outputLayout")
     }
-
-    // Un solo thread dedicato: interpreter creato e invocato SEMPRE qui.
-    private val inferenceExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread {
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            r.run()
-        }.apply { name = "AiUpscaler-Inference" }
-    }
-    private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
-
-    // Creata pigramente, ma la prima creazione avverrà comunque dentro
-    // inferenceDispatcher grazie a come la richiamiamo in upscale().
-
-    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE){
-        createInterpreter(DelegateMode.GPU) ?: createInterpreter(DelegateMode.CPU)!!
-    }
-
-    private val interpreter by interpreterLazy
-
-    fun close() {
-        if (interpreterLazy.isInitialized()) interpreter.close()
-        inferenceExecutor.shutdown()
-    }
-
     private val compatList = CompatibilityList()
     private fun createInterpreter(mode: DelegateMode): Interpreter? {
-        // Per il GPU, controlliamo prima la compatibility list ufficiale:
-        // se il device non è in lista, non proviamo nemmeno, risparmiando
-        // il costo di un tentativo che sappiamo già fallirebbe o andrebbe male.
+        /*
+        For the GPU, let's first check the official compatibility list:
+        if the device is not in the list, we don't even try, saving
+        the cost of an attempt that we already know would fail or go wrong.
+         */
         if (mode == DelegateMode.GPU && !compatList.isDelegateSupportedOnThisDevice) {
             return null
         }
@@ -163,16 +150,15 @@ class AiUpscaler(
 
 
     /**
-     * Estrae in `canvas` un tile di dimensione `paddedTileSize`, con
-     * `contentX`/`contentY` come angolo del contenuto reale (non del padding).
-     * Se `model.paddingPerSide == 0` (Real-ESRGAN), comportamento invariato
-     * rispetto a prima. Se >0 (waifu2x/upconv_7), il margine attorno al
-     * contenuto è preso da pixel reali della pagina quando disponibili;
-     * ai bordi veri della pagina, dove non c'è altro contenuto, il pixel di
-     * bordo viene replicato (CLAMP) invece di lasciare area vuota o leggere
-     * fuori dai limiti della bitmap — necessario perché quei pixel non sono
-     * decorativi, la rete li userà come contesto reale per il suo campo
-     * ricettivo prima di scartarli.
+     * Extracts a tile of size 'paddedTileSize' into 'canvas', with
+     * 'contentX'/'contentY' as the corner of the actual content (not the padding).
+     * If 'model.paddingPerSide == 0' (Real-ESRGAN), behavior unchanged
+     * compared to before. If >0 (waifu2x), the margin around the
+     * content is taken from real pixels on the page when available;
+     * at the true edges of the page, where there is no other content, the bordering
+     * pixel is replicated (CLAMP) instead of leaving empty area or reading
+     * out of bitmap bounds. Necessary because those pixels are used
+     * by the network as a real context for its receptive field before discarding them.
      */
     private fun drawPaddedTile(source: Bitmap, canvas: Canvas, contentX: Int, contentY: Int) {
         val padding = model.paddingPerSide
@@ -215,16 +201,16 @@ class AiUpscaler(
         positions.chunked(batchSize).forEach { batch ->
             val realCount = batch.size
 
-            // Riutilizziamo le Bitmap e Canvas di input per estrarre i tile
+            // Reuse input Bitmaps and Canvases to extract tiles
             for (i in 0 until batchSize) {
                 val pos = if (i < realCount) batch[i] else batch.last() // Padding duplicando l'ultimo se necessario
                 drawPaddedTile(input, inputCanvases[i], pos.x, pos.y)
             }
 
-            // Inferenza nativa C++
+            // Inference
             val results = withContext(inferenceDispatcher) { runBatchInference(inputTiles) }
 
-            // Disegno dei soli risultati reali sul canvas finale
+            // Draw only the real results onto the final canvas
             for (i in 0 until realCount) {
                 val pos = batch[i]
                 val cropLeft = if (pos.x == 0) 0 else margin * scale
@@ -249,7 +235,7 @@ class AiUpscaler(
 
         val t0 = System.currentTimeMillis()
 
-        // 1. Scrittura nativa C++ nei buffer
+        // Native C++ write into buffers
         batchInputBuffer.clear()
         val tilePixelCount = paddedTileSize * paddedTileSize
         for (i in tiles.indices) {
@@ -263,12 +249,12 @@ class AiUpscaler(
         batchInputBuffer.rewind()
         val t1 = System.currentTimeMillis()
 
-        // 2. Run TFLite
+        // TFLite running
         batchOutputBuffer.clear()
         activeInterpreter.run(batchInputBuffer, batchOutputBuffer)
         val t2 = System.currentTimeMillis()
 
-        // 3. Lettura nativa C++ dal buffer alle Bitmap riutilizzabili
+        // Native C++ read from buffer to reusable Bitmaps
         batchOutputBuffer.rewind()
         val outTilePixelCount = outSize * outSize
         for (i in tiles.indices) {
@@ -284,5 +270,10 @@ class AiUpscaler(
         if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Native write: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
 
         return reusableOutputTiles
+    }
+
+    fun close() {
+        if (interpreterLazy.isInitialized()) interpreter.close()
+        inferenceExecutor.shutdown()
     }
 }

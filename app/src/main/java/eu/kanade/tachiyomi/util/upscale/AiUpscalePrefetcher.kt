@@ -25,14 +25,11 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Precarica in cache l'upscaling delle N pagine successive a quella corrente,
- * mentre l'utente sta ancora leggendo quella attuale (idle time), invece di
- * partire on-demand esattamente quando la pagina diventa visibile.
+ * Preload the upscaling of the N pages following the current one into cache,
+ * while the user is still reading the current one (idle time), instead of
+ * starting on demand exactly when the page becomes visible.
  *
- * Scope dedicato, di lunga durata per design (deve sopravvivere al riciclo
- * delle singole holder) — a differenza del bug con GlobalScope visto prima,
- * qui è intenzionale: la concorrenza reale resta comunque limitata dal
- * semaforo già presente in AiUpscaleCache.
+ * Dedicated scope, long-lasting by design (must survive recycling of the individual holders)
  */
 object AiUpscalePrefetcher {
 
@@ -40,11 +37,6 @@ object AiUpscalePrefetcher {
         if (BuildConfig.DEBUG) Log.e("AiUpscalePrefetch", "fillLoop stopped due to unhandled exception", throwable)
     }
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
-
-    // Dedup: evita di rilanciare decode+letura per una pagina già richiesta
-    // (l'eventuale duplicato viene comunque bloccato anche a valle, nel
-    // controllo file.exists() dentro AiUpscaleCache, ma qui evitiamo di
-    // sprecare anche la lettura/decodifica dei byte originali).
     private val requested = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var currentChapterPages: List<ReaderPage>? = null
     @Volatile private var nextChapterProvider: (() -> List<ReaderPage>?)? = null
@@ -54,12 +46,12 @@ object AiUpscalePrefetcher {
     @Volatile private var targetWidth: Int = 0
     private var fillJob: Job? = null
 
-    /**
-     * Restituisce la pagina all'offset richiesto rispetto alla posizione corrente,
-     * attraversando il confine di capitolo se necessario. Se l'offset ricade nel
-     * prossimo capitolo ma questo non è ancora caricato (pages == null), ritorna
-     * null: il chiamante la riproverà al giro successivo del loop, non è un
-     * fallimento definitivo.
+    /*
+     * Returns the page at the required offset from the current position,
+     * crossing the chapter boundary if necessary. If the offset falls in the
+     * next chapter but this one is not loaded yet (pages == null), returns
+     * null: the caller will retry it on the next turn of the loop, it's not a
+     * definitive failure.
      */
     private fun pageAtOffset(offset: Int): ReaderPage? {
         val curPages = currentChapterPages ?: return null
@@ -84,8 +76,7 @@ object AiUpscalePrefetcher {
             val key = "${nextPage.chapter.chapter.id}_${nextPage.index}"
             if (requested.contains(key)) continue
 
-            // Risolto per-pagina, non una volta per l'intera finestra: pagine oltre
-            // il confine di capitolo appartengono a un pageLoader diverso.
+            // Pages across the chapter boundary belong to a different pageLoader
             val loader = nextPage.chapter.pageLoader
             if (loader == null) {
                 if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: pageLoader not ready (chapter not started)")
@@ -155,15 +146,14 @@ object AiUpscalePrefetcher {
     }
 
     /**
-     * Aggiorna la posizione di lettura corrente. Non avvia direttamente il
-     * prefetch di N pagine come prima: aggiorna solo lo stato che il loop
-     * continuo (avviato una volta sola) legge ad ogni iterazione. Chiamare
-     * ad ogni cambio pagina, non solo alla prima.
-     * @param nextChapterProvider fornisce le pagine del capitolo successivo, se
-     * disponibili. Passato come lambda (non come lista già risolta) perché il
-     * capitolo potrebbe non essere ancora caricato al momento di questa chiamata
-     * ma diventarlo mentre il loop continua a girare — la lambda viene rivalutata
-     * ad ogni tentativo, non catturata una volta sola.
+     * Update the current read position. It does not directly start the
+     * prefetch of N pages: it updates only the state that the continuous
+     * loop (started only once) reads at each iteration. Call
+     * at every page change, not just the first.
+     * @param nextChapterProvider provides the pages of the next chapter, if
+     * available. Passed as a lambda because the
+     * chapter may not be loaded yet at the time of this call
+     * but become one while the loop keeps spinning
      */
     fun updatePosition(
         current: ReaderPage,
@@ -187,8 +177,7 @@ object AiUpscalePrefetcher {
         }
     }
 
-    // Da chiamare quando si cambia capitolo, per non far crescere la Set
-    // all'infinito durante una sessione di lettura lunga.
+    // To call when chapter is changed, avoiding the Set to grow indefinitely
     fun clear() {
         requested.clear()
         fillJob?.cancel()

@@ -7,21 +7,15 @@ import tachiyomi.i18n.kmk.KMR
 data class BatchVariant(
     val batchSize: Int,
     val assetFileName: String,
-    // Popolati quando costruiamo il download manager (prossimo punto):
-    // val downloadUrl: String, val sha256: String, val sizeBytes: Long
 )
+
 /**
- * Descrive un modello di upscaling disponibile. `offset` è la quantità di
- * pixel "mangiati" dalla rete per via di convoluzioni senza padding interno
- * (valid convolution) — 0 per modelli same-padding come Real-ESRGAN, >0 per
- * modelli come waifu2x/upconv_7 che restringono il tile attraversando la rete:
- *   output_reale = scale × tileContentSize
- *   input_da_dare_alla_rete = tileContentSize + offset / scale
- *
- * Per aggiungere un nuovo modello in futuro: converti, misura l'offset reale
- * (vedi verifyOffset in fondo al file per come derivarlo empiricamente se non
- * lo conosci dall'architettura), e aggiungi una entry qui — nient'altro nel
- * resto della classe AiUpscaler richiede modifiche.
+ * Describes an available upscaling model. 'offset' si the quantity of
+ * pixels "eaten" by the network due to convolutions without internal padding
+ * (valid convolution), 0 for same-padding models like Real-ESRGAN, >0 for
+ * models like waifu2x that narrow the tile across the network:
+ * real_output = scale * tileContentSize
+ * input_to_give_to_the_network = tileContentSize + offset / scale
  */
 enum class UpscaleModel(
     val displayName: String,
@@ -99,27 +93,27 @@ enum class UpscaleModel(
 
     init {
         require(offset % (2 * scale) == 0) {
-            "offset ($offset) deve essere divisibile per 2*scale ($scale) in $name"
+            "offset ($offset) must be divisible for 2*scale ($scale) in $name"
         }
-        require(batchVariants.isNotEmpty()) { "$name deve avere almeno una variante batch" }
+        require(batchVariants.isNotEmpty()) { "$name must have at leat one batch variant" }
         require(batchVariants.map { it.batchSize }.distinct().size == batchVariants.size) {
-            "$name ha batch size duplicati tra le varianti"
+            "$name has duplicated batch sizes among variants"
         }
     }
 
-    /** Pixel di padding da aggiungere per lato quando si estrae il tile dalla pagina sorgente. */
+    /** Padding pixels to add per side when a tile is extracted from the source page. */
     val paddingPerSide: Int get() = offset / (2 * scale)
 
-    /** Dimensione reale del tile da dare in input al modello (contenuto + padding). */
+    /** Real tile dimensions to give in input to the model (content + padding). */
     val paddedTileSize: Int get() = tileContentSize + 2 * paddingPerSide
 
-    /** Dimensione dell'output prodotto dal modello per un singolo tile. */
+    /** Produced output dimension of the model per a single tile. */
     val outSize: Int get() = scale * tileContentSize
 
-    /** Valori di batch selezionabili in UI per questo modello, ordinati. */
+    /** Batch sizes available in UI for this model. */
     val availableBatchSizes: List<Int> get() = batchVariants.map { it.batchSize }.sorted()
 
-    /** Variante esatta se esiste, altrimenti la più vicina disponibile (mai un crash su un valore stale in preferenze). */
+    /** Exact variant if it exists, otherwise the closest available one (never crashes on a stale value in preferences). */
     fun variantFor(requestedBatchSize: Int): BatchVariant =
         batchVariants.find { it.batchSize == requestedBatchSize }
             ?: batchVariants.minBy { kotlin.math.abs(it.batchSize - requestedBatchSize) }

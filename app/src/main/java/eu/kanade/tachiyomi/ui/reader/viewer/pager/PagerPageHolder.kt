@@ -167,13 +167,7 @@ class PagerPageHolder(
                 snapshotBitmap,
                 { copyResult ->
                     if (copyResult == PixelCopy.SUCCESS) {
-                        // Ritagliamo SEMPRE una zona fissa e generosa nell'angolo dove
-                        // vive il badge (basso-destra), indipendentemente dal suo stato
-                        // reale al momento della cattura. Non dipendiamo più dalle
-                        // coordinate esatte del badge (che cambiano larghezza tra stati,
-                        // causando il taglio visto prima) né da QUANDO catturiamo
-                        // rispetto al suo ciclo di vita — qualunque badge, in qualunque
-                        // stato, sia mai stato lì dentro, sparisce.
+                        // Rectangle cut to exclude the upscaling indicator to be in the Snapshot
                         val reservedWidthPx = 140.dpToPx
                         val reservedHeightPx = 56.dpToPx
                         val clearRect = Rect(
@@ -194,8 +188,7 @@ class PagerPageHolder(
                         }
                         addView(overlay)
                         crossfadeOverlay = overlay
-                        upscaleIndicator?.bringToFront() // il badge reale, sempre nitido,
-                        // riempie esattamente il buco che abbiamo appena creato
+                        upscaleIndicator?.bringToFront()
                         requestLayout()
                         invalidate()
                     }
@@ -318,9 +311,6 @@ class PagerPageHolder(
                         } else {
                             null
                         }
-                        // Materializziamo QUI, una volta sola, mentre siamo ancora single-thread.
-                        // Da qui in poi non tocchiamo più itemSource: ogni consumatore
-                        // (display, upscaler) riceve il proprio Buffer indipendente da itemBytes.
                         val bytes = itemSource.use { it.readByteArray() }
                         Triple(bytes, isAnimated, background)
                     }
@@ -343,7 +333,7 @@ class PagerPageHolder(
                         AiUpscaleCache.getOrUpscale(
                             chapterId = page.chapter.chapter.id,
                             pageIndex = page.index,
-                            source = Buffer().write(itemBytes), // copia indipendente, sola per l'upscaler
+                            source = Buffer().write(itemBytes),
                             targetWidth = targetWidth,
                             priority = UpscalePriorityGate.Priority.VISIBLE
                         )
@@ -364,7 +354,6 @@ class PagerPageHolder(
                         upscaleIndicator?.showActive()
                     }
                 } else {
-                    // Caso raro: mostriamo subito la pagina grezza + badge "in corso"
                     withUIContext {
                         setImage(Buffer().write(itemBytes), false, buildConfig()) // copia indipendente, sola per la UI
                         pageBackground = background
@@ -373,7 +362,6 @@ class PagerPageHolder(
                         upscaleIndicator?.showInProgress()
                     }
 
-                    // Quando l'upscale finisce (anche molto dopo), swap con crossfade
                     scope.launch {
                         val lateResult = upscaleDeferred.await()
                         withUIContext {
@@ -592,7 +580,7 @@ class PagerPageHolder(
     override fun onImageLoaded() {
         super.onImageLoaded()
         progressIndicator?.hide()
-        removeErrorLayout() // difensivo: non lasciare mai un errore vecchio sopra un'immagine caricata con successo
+        removeErrorLayout()
 
         crossfadeOverlay?.let { overlay ->
             if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[page${page.index}] crossfade: beginning fade overlay")

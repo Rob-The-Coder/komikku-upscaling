@@ -63,6 +63,8 @@
     <string name="pref_empty_ai_cache">Empty AI upscaling cache</string>
     <string name="pref_empty_ai_cache_summary">Delete upscaled pages from disk</string>
     <string name="emptied_ai_cache">Emptied AI upscaling cache</string>
+    <string name="pref_ai_upscale_cache_size">AI upscaling cache size</string>
+    <string name="pref_ai_upscale_cache_size_summary">Maximum disk space used to store already-upscaled pages</string>
     <!-- Preferences -->
       <!-- Appearance section -->
     <string name="pref_custom_theme_style">Custom theme style</string>
