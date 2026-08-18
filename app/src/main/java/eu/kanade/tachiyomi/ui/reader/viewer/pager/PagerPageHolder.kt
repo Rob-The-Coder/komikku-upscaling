@@ -103,7 +103,7 @@ class PagerPageHolder(
     // KMK -->
     private var upscaleIndicator: UpscaleStatusIndicator? = null
     private var crossfadeOverlay: ImageView? = null
-    // <--
+    // KMK <--
 
     init {
         loadJob = scope.launch { loadPageAndProcessStatus(1) }
@@ -612,7 +612,7 @@ class PagerPageHolder(
                 .start()
             crossfadeOverlay = null
         }
-        // KMK -->
+        // KMK <--
     }
     /**
      * Called when an image fails to decode.
