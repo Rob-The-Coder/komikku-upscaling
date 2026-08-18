@@ -8,8 +8,8 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Shader
-import android.util.Log
-import eu.kanade.tachiyomi.BuildConfig
+import exh.log.xLogD
+import exh.log.xLogW
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
@@ -86,8 +86,8 @@ class AiUpscaler(
         inputLayout = detectLayout(inTensor.shape())
         outputLayout = detectLayout(outTensor.shape())
 
-        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Input: layout=$inputLayout")
-        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Output: layout=$outputLayout")
+        xLogD("Input: layout=$inputLayout")
+        xLogD("Output: layout=$outputLayout")
     }
     private val compatList = CompatibilityList()
     private fun createInterpreter(mode: DelegateMode): Interpreter? {
@@ -112,11 +112,11 @@ class AiUpscaler(
 
             val newInterpreter = Interpreter(loadModelFile(), options)
             detectAndCacheLayouts(newInterpreter)
-            if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Interpreter created with mode=${mode}, batch=${batchSize}, Shape: ${newInterpreter.getInputTensor(0).shape()}")
+            xLogD("Interpreter created with mode=${mode}, batch=${batchSize}, Shape: ${newInterpreter.getInputTensor(0).shape()}")
 
             newInterpreter
         } catch (e: Throwable) {
-            Log.w("AiUpscaler", "GPU interpret creation failed", e)
+            xLogW("GPU interpret creation failed", e)
             if (mode == DelegateMode.CPU) throw e else null
         }
     }
@@ -267,7 +267,7 @@ class AiUpscaler(
         }
         val t3 = System.currentTimeMillis()
 
-        if (BuildConfig.DEBUG) Log.d("AiUpscaler", "Native write: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
+        xLogD("Native write: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
 
         return reusableOutputTiles
     }

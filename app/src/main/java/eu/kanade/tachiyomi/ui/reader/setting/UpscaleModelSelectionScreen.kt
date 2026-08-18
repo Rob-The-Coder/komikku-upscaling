@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.setting
 
+import android.text.format.Formatter
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -88,7 +89,7 @@ class UpscaleModelSelectionScreen : Screen() {
                     val isSelected = selectedModel == variant.model && selectedBatch == variant.batchSize
 
                     val entry = remember(variant) { ModelManifestLoader.entryFor(context, variant.model, variant.batchSize) }
-                    val sizeMb = entry?.let { it.sizeBytes / 1_048_576.0 }
+                    val formattedSize = entry?.let { Formatter.formatShortFileSize(context, it.sizeBytes) }
 
                     ListItem(
                         headlineContent = {
@@ -106,7 +107,13 @@ class UpscaleModelSelectionScreen : Screen() {
                                 }
                             }
                         },
-                        supportingContent = { Text("Batch ${variant.batchSize} · ${sizeMb?.let { "%.1f MB".format(it) } ?: "—"}") },
+                        supportingContent = {
+                            Text(
+                                formattedSize?.let {
+                                    stringResource(KMR.strings.upscale_model_batch_size, variant.batchSize, it)
+                                } ?: variant.batchSize.toString(),
+                            )
+                        },
                         leadingContent = {
                             if (downloadState is ModelDownloadState.Downloaded) {
                                 IconButton(onClick = {

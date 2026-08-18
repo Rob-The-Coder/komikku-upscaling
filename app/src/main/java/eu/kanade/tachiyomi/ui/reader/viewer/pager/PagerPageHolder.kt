@@ -45,7 +45,6 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
-import android.util.Log
 import android.view.PixelCopy
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
@@ -56,7 +55,8 @@ import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
-import eu.kanade.tachiyomi.BuildConfig
+import exh.log.xLogD
+import exh.log.xLogE
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -101,8 +101,10 @@ class PagerPageHolder(
      */
     private var extraLoadJob: Job? = null
 
+    // KMK -->
     private var upscaleIndicator: UpscaleStatusIndicator? = null
     private var crossfadeOverlay: ImageView? = null
+    // <--
 
     init {
         loadJob = scope.launch { loadPageAndProcessStatus(1) }
@@ -121,9 +123,11 @@ class PagerPageHolder(
         extraLoadJob?.cancel()
         extraLoadJob = null
 
+        // KMK -->
         upscaleIndicator?.destroy()
         crossfadeOverlay?.animate()?.cancel()
         crossfadeOverlay = null
+        // KMK <--
     }
 
     private fun initProgressIndicator() {
@@ -138,14 +142,16 @@ class PagerPageHolder(
         }
     }
 
+    // KMK -->
     private fun initUpscaleIndicator() {
         if (upscaleIndicator == null) {
             upscaleIndicator = UpscaleStatusIndicator(context, seedColor = seedColor, debugTag = "pagina${page.index}")
             addView(upscaleIndicator)
         }
     }
+    // KMK <--
 
-
+    // KMK -->
     private fun crossfadeToUpscaled(newSource: BufferedSource) {
         if (width <= 0 || height <= 0) {
             setImage(newSource, isAnimated = false, config = buildConfig())
@@ -200,6 +206,7 @@ class PagerPageHolder(
             setImage(newSource, isAnimated = false, config = buildConfig())
         }
     }
+    // KMK <--
 
     /**
      * Loads the page and processes changes to the page's status.
@@ -219,7 +226,9 @@ class PagerPageHolder(
                 loader.loadPage(page)
             }
             page.statusFlow.collectLatest { state ->
-                if (BuildConfig.DEBUG) Log.d("PagerPageHolder", "statusFlow issued for page ${page.index}: $state")
+                // KMK -->
+                xLogD("statusFlow issued for page ${page.index}: $state")
+                // KMK <--
                 when (state) {
                     Page.State.Queue -> setQueued()
                     Page.State.LoadPage -> setLoading()
@@ -263,6 +272,7 @@ class PagerPageHolder(
         removeErrorLayout()
     }
 
+    // KMK -->
     private fun buildConfig() = Config(
         zoomDuration = viewer.config.doubleTapAnimDuration,
         minimumScaleType = viewer.config.imageScaleType,
@@ -273,13 +283,16 @@ class PagerPageHolder(
         doubleTapZoom = viewer.config.doubleTapZoom,
         landscapeZoomScaleType = viewer.config.landscapeZoomScaleType,
     )
+    // KMK <--
 
     /**
      * Called when the page is ready.
      */
     private suspend fun setImage() {
-        if (BuildConfig.DEBUG) Log.d("PagerPageHolder", "setImage() called for page ${page.index}")
+        // KMK -->
+        xLogD("setImage() called for page ${page.index}")
         upscaleIndicator?.hide()
+        // KMK <--
         if (extraPage == null) {
             progressIndicator?.setProgress(0)
         } else {
@@ -317,6 +330,7 @@ class PagerPageHolder(
                 }
             }
 
+            // KMK -->
             val upscalePrefs = Injekt.get<ReaderPreferences>()
             val targetWidth = context.resources.displayMetrics.widthPixels
             val upscaleEnabled = upscalePrefs.aiUpscaleEnabled().get() && !isAnimated
@@ -338,7 +352,7 @@ class PagerPageHolder(
                             priority = UpscalePriorityGate.Priority.VISIBLE
                         )
                     } catch (e: Throwable) {
-                        if (BuildConfig.DEBUG) Log.e("AiUpscale", "Upscaling failed for page ${page.index}", e)
+                        xLogE("Upscaling failed for page ${page.index}", e)
                         null
                     }
                 }
@@ -377,6 +391,7 @@ class PagerPageHolder(
                     }
                 }
             }
+            // KMK <--
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
             withUIContext {
@@ -582,19 +597,21 @@ class PagerPageHolder(
         progressIndicator?.hide()
         removeErrorLayout()
 
+        // KMK -->
         crossfadeOverlay?.let { overlay ->
-            if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[page${page.index}] crossfade: beginning fade overlay")
+            xLogD("[page${page.index}] crossfade: beginning fade overlay")
             overlay.animate()
                 .alpha(0f)
                 .setDuration(250L)
                 .withEndAction {
-                    if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[page${page.index}] crossfade: overlay removed")
+                    xLogD("[page${page.index}] crossfade: overlay removed")
                     removeView(overlay)
                     overlay.setImageBitmap(null)
                 }
                 .start()
             crossfadeOverlay = null
         }
+        // KMK -->
     }
     /**
      * Called when an image fails to decode.

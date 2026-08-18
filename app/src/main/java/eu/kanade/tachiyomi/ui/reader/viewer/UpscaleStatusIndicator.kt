@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import android.content.Context
 import android.util.AttributeSet
-import android.util.Log
 import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -35,8 +34,8 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.theme.TachiyomiTheme
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.util.system.dpToPx
+import exh.log.xLogD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -83,7 +82,7 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
     private var autoDismissJob: Job? = null
 
     private fun setState(newState: UpscaleBadgeState, caller: String) {
-        if (BuildConfig.DEBUG) Log.d("UpscaleBadge", "[$debugTag] state: $state -> $newState (called by $caller)")
+        xLogD("[$debugTag] state: $state -> $newState (called by $caller)")
         state = newState
     }
 

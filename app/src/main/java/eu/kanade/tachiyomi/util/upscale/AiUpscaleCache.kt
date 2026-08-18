@@ -3,10 +3,10 @@ package eu.kanade.tachiyomi.util.upscale
 import android.app.Application
 import android.graphics.Bitmap
 import android.os.Build
-import android.util.Log
 import com.jakewharton.disklrucache.DiskLruCache
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import exh.log.xLogW
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,17 +67,12 @@ object AiUpscaleCache {
         cacheSizeMb.toLong() * 1024 * 1024,
     )
 
-    private fun getUpscaler(): AiUpscaler? {
-        val model = readerPreferences.aiUpscaleModel().get()
-        val batch = readerPreferences.aiUpscaleBatchSize().get()
-        val overlap = readerPreferences.aiUpscaleTileOverlap().get()
-
+    private fun getUpscaler(model: UpscaleModel, batch: Int, overlap: Int): AiUpscaler? {
         BundledModelInstaller.ensureInstalled(context, UpscaleModel.REALESRGAN_ANIMEVIDEOV3, batchSize = 1)
 
         if (!modelDownloadManager.isDownloaded(model, batch)) {
-            //starting the download in the background to avoid blocking reading
             modelDownloadManager.enqueueDownload(model, batch, wifiOnly = readerPreferences.aiUpscaleWifiOnlyDownloads().get())
-            Log.w("AiUpscaleCache", "Modello ${model.name} B$batch non pronto, download avviato, upscaling saltato per questa pagina")
+            xLogW("Model ${model.name} B$batch not ready, download started, upscaling skipped for this page")
             return null
         }
 
@@ -97,7 +92,10 @@ object AiUpscaleCache {
         targetWidth: Int,
         priority: UpscalePriorityGate.Priority = UpscalePriorityGate.Priority.VISIBLE,
     ): BufferedSource? {
-        val configTag = "${currentModel?.name}_B${currentBatch}_O${currentOverlap}"
+        val model = readerPreferences.aiUpscaleModel().get()
+        val batch = readerPreferences.aiUpscaleBatchSize().get()
+        val overlap = readerPreferences.aiUpscaleTileOverlap().get()
+        val configTag = "${model.name}_B${batch}_O${overlap}"
         val key = DiskUtil.hashKeyForDisk("${chapterId}_${pageIndex}_$configTag")
 
         readFromCache(key)?.let { return it }
@@ -120,7 +118,7 @@ object AiUpscaleCache {
             }
 
             val upscaled = try {
-                getUpscaler()?.upscale(resized)
+                getUpscaler(model, batch, overlap)?.upscale(resized)
             } catch (e: OutOfMemoryError) {
                 resized
             }

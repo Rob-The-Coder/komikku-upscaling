@@ -1,10 +1,11 @@
 package eu.kanade.tachiyomi.util.upscale
 
-import android.util.Log
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import exh.log.xLogD
+import exh.log.xLogE
+import exh.log.xLogW
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,7 @@ import kotlin.time.Duration.Companion.milliseconds
 object AiUpscalePrefetcher {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        if (BuildConfig.DEBUG) Log.e("AiUpscalePrefetch", "fillLoop stopped due to unhandled exception", throwable)
+        xLogE("fillLoop stopped due to unhandled exception", throwable)
     }
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
     private val requested = ConcurrentHashMap.newKeySet<String>()
@@ -64,7 +65,7 @@ object AiUpscalePrefetcher {
     }
     private suspend fun tryFillNextGap(): Boolean {
         if (currentChapterPages == null) {
-            if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "tryFillNextGap: currentChapterPages is null")
+            xLogD("tryFillNextGap: currentChapterPages is null")
             return false
         }
 
@@ -79,7 +80,7 @@ object AiUpscalePrefetcher {
             // Pages across the chapter boundary belong to a different pageLoader
             val loader = nextPage.chapter.pageLoader
             if (loader == null) {
-                if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: pageLoader not ready (chapter not started)")
+                xLogD("offset=$offset page ${nextPage.index}: pageLoader not ready (chapter not started)")
                 continue
             }
 
@@ -88,7 +89,7 @@ object AiUpscalePrefetcher {
                     try {
                         loader.loadPage(nextPage)
                     } catch (e: Throwable) {
-                        if (BuildConfig.DEBUG) Log.w("AiUpscalePrefetch", "failed loadPage for page ${nextPage.index}", e)
+                        xLogW("failed loadPage for page ${nextPage.index}", e)
                     }
                 }
 
@@ -97,18 +98,18 @@ object AiUpscalePrefetcher {
                 }
 
                 if (readyState !is Page.State.Ready) {
-                    if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: not ready within timeout (state=$readyState)")
+                    xLogD("offset=$offset page ${nextPage.index}: not ready within timeout (state=$readyState)")
                     continue
                 }
 
                 val streamFn = nextPage.stream
                 if (streamFn == null) {
-                    if (BuildConfig.DEBUG) Log.w("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: Ready but null stream")
+                    xLogW("offset=$offset page ${nextPage.index}: Ready but null stream")
                     requested.add(key)
                     continue
                 }
 
-                if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: starting upscale")
+                xLogD("offset=$offset page ${nextPage.index}: starting upscale")
                 val bytes = withContext(Dispatchers.IO) { streamFn().use { it.readBytes() } }
                 if (!ImageUtil.isAnimatedAndSupported(Buffer().write(bytes))) {
                     AiUpscaleCache.getOrUpscale(
@@ -120,29 +121,29 @@ object AiUpscalePrefetcher {
                     )
                 }
                 requested.add(key)
-                if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: completed")
+                xLogD("offset=$offset page ${nextPage.index}: completed")
                 return true
             } catch (e: Throwable) {
-                if (BuildConfig.DEBUG) Log.e("AiUpscalePrefetch", "offset=$offset page ${nextPage.index}: exception", e)
+                xLogE("offset=$offset page ${nextPage.index}: exception", e)
             }
         }
-        if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "no processable page (currentIndex=$currentIndex, aheadCount=$aheadCount)")
+        xLogD("no processable page (currentIndex=$currentIndex, aheadCount=$aheadCount)")
         return false
     }
     private suspend fun fillLoop() {
-        if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "fillLoop started")
+        xLogD("fillLoop started")
         while (currentCoroutineContext().isActive) {
             val processedSomething = try {
                 tryFillNextGap()
             } catch (e: Throwable) {
-                if (BuildConfig.DEBUG) Log.e("AiUpscalePrefetch", "tryFillNextGap threw an exception", e)
+                xLogE("tryFillNextGap threw an exception", e)
                 false
             }
             if (!processedSomething) {
                 delay(500.milliseconds)
             }
         }
-        if (BuildConfig.DEBUG) Log.d("AiUpscalePrefetch", "fillLoop terminated")
+        xLogD("fillLoop terminated")
     }
 
     /**

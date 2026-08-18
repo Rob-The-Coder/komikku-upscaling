@@ -1,7 +1,6 @@
 package eu.kanade.presentation.more.settings.screen
 
 import android.annotation.SuppressLint
-import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.Settings
@@ -82,7 +81,6 @@ import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import okhttp3.Headers
@@ -263,6 +261,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                     subtitle = stringResource(MR.strings.pref_clear_database_summary),
                     onClick = { navigator.push(ClearDatabaseScreen()) },
                 ),
+                // KMK -->
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(KMR.strings.pref_empty_ai_cache),
                     subtitle = stringResource(KMR.strings.pref_empty_ai_cache_summary),
@@ -273,6 +272,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                         }
                     },
                 ),
+                // KMK <--
             ),
         )
     }

@@ -47,16 +47,6 @@ enum class UpscaleModel(
             BatchVariant(batchSize = 3, assetFileName = "waifu2x_384T_B3_float32.tflite"),
         ),
     ),
-    CUNET_SCALE2X(
-        displayName = "cunet (2x)",
-        descriptionRes = KMR.strings.desc_upscale_cunet2x,
-        scale = 2,
-        tileContentSize = 384,
-        offset = 72,
-        batchVariants = listOf(
-            BatchVariant(batchSize = 1, assetFileName = "cunet2x_384T_B1_float32.tflite")
-        ),
-    ),
     REALCUGAN_SCALE2X(
         displayName = "Real-CUGAN (2x)",
         descriptionRes = KMR.strings.desc_upscale_realcugan2x,
@@ -78,16 +68,6 @@ enum class UpscaleModel(
             BatchVariant(batchSize = 1, assetFileName = "realcugan3x_no_denoise_384T_B1_float32.tflite"),
             BatchVariant(batchSize = 3, assetFileName = "realcugan3x_no_denoise_384T_B3_float32.tflite")
         )
-    ),
-    REALCUGAN_SCALE4X(
-        displayName = "Real-CUGAN (4x)",
-        descriptionRes = KMR.strings.desc_upscale_realcugan4x,
-        scale = 4,
-        tileContentSize = 384,
-        offset = 152,  // = paddingPerSide(19) × 2 × scale(4)
-        batchVariants = listOf(
-            BatchVariant(batchSize = 1, assetFileName = "realcugan4x_no_denoise_384T_B1_float32.tflite")
-        ),
     ),
     ;
 

@@ -168,6 +168,7 @@ object SettingsReaderScreen : SearchableSettings {
         )
     }
 
+    // KMK -->
     @Composable
     private fun getUpscalingGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
         val navigator = LocalNavigator.currentOrThrow
@@ -190,7 +191,7 @@ object SettingsReaderScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(KMR.strings.pref_ai_upscale_model),
-                    subtitle = "${aiUpscaleModel.displayName} · Batch $aiUpscaleBatch",
+                    subtitle = stringResource(KMR.strings.pref_ai_upscale_model_subtitle, aiUpscaleModel.displayName, aiUpscaleBatch),
                     onClick = { navigator.push(UpscaleModelSelectionScreen()) },
                     enabled = aiUpscaleEnabled,
                 ),
@@ -242,6 +243,7 @@ object SettingsReaderScreen : SearchableSettings {
             ),
         )
     }
+    // KMK <--
 
     @Composable
     private fun getEInkGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {

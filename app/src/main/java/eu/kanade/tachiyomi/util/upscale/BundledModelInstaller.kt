@@ -1,7 +1,8 @@
 package eu.kanade.tachiyomi.util.upscale
 
 import android.app.Application
-import android.util.Log
+import exh.log.xLogD
+import exh.log.xLogW
 import java.io.File
 
 object BundledModelInstaller {
@@ -15,7 +16,7 @@ object BundledModelInstaller {
      */
     fun ensureInstalled(context: Application, model: UpscaleModel, batchSize: Int) {
         val entry = ModelManifestLoader.entryFor(context, model, batchSize) ?: run {
-            Log.w("BundledModelInstaller", "No entry manifest for ${model.name} B$batchSize, avoid copy")
+            xLogW("No entry manifest for ${model.name} B$batchSize, avoid copy")
             return
         }
 
@@ -30,9 +31,9 @@ object BundledModelInstaller {
                 tmpFile.outputStream().use { output -> input.copyTo(output) }
                 tmpFile.renameTo(destFile)
             }
-            Log.d("BundledModelInstaller", "Bundled model ${entry.assetFileName} installed in filesDir/models/")
+            xLogD("Bundled model ${entry.assetFileName} installed in filesDir/models/")
         } catch (e: java.io.FileNotFoundException) {
-            Log.d("BundledModelInstaller", "${entry.assetFileName} is not bundled, will be donwloaded as needed")
+            xLogD("${entry.assetFileName} is not bundled, will be donwloaded as needed")
         }
     }
 }
