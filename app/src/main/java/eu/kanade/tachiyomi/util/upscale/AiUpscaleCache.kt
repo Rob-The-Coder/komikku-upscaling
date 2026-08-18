@@ -95,7 +95,7 @@ object AiUpscaleCache {
         val model = readerPreferences.aiUpscaleModel().get()
         val batch = readerPreferences.aiUpscaleBatchSize().get()
         val overlap = readerPreferences.aiUpscaleTileOverlap().get()
-        val configTag = "${model.name}_B${batch}_O${overlap}"
+        val configTag = "${model.name}_B${batch}_O$overlap"
         val key = DiskUtil.hashKeyForDisk("${chapterId}_${pageIndex}_$configTag")
 
         readFromCache(key)?.let { return it }
@@ -105,7 +105,9 @@ object AiUpscaleCache {
 
             val decoded = try {
                 ImageDecoder.newInstance(source.inputStream())?.decode()
-            } catch (e: Exception) { null } ?: return@withPermit null
+            } catch (e: Exception) {
+                null
+            } ?: return@withPermit null
 
             val resized = if (decoded.width > targetWidth) {
                 val scale = targetWidth.toFloat() / decoded.width

@@ -280,7 +280,7 @@ class WebtoonViewer(
             }
         }
 
-        //KMK -->
+        // KMK -->
         val prefetchAhead = readerPreferences.aiUpscalePrefetchAheadCount().get()
         val targetWidth = activity.resources.displayMetrics.widthPixels
         AiUpscalePrefetcher.updatePosition(

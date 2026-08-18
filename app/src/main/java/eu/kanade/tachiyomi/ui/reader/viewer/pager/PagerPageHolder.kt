@@ -11,6 +11,10 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.PixelCopy
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
@@ -21,19 +25,27 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.UpscaleStatusIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
+import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import exh.log.xLogD
+import exh.log.xLogE
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
 import tachiyomi.core.common.i18n.stringResource
-import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
@@ -44,19 +56,6 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.max
-
-import android.view.PixelCopy
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
-import android.widget.FrameLayout
-import android.widget.ImageView
-import eu.kanade.tachiyomi.ui.reader.viewer.UpscaleStatusIndicator
-import eu.kanade.tachiyomi.util.system.dpToPx
-import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.withTimeoutOrNull
-import exh.log.xLogD
-import exh.log.xLogE
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -161,8 +160,10 @@ class PagerPageHolder(
         val locationInWindow = IntArray(2)
         getLocationInWindow(locationInWindow)
         val rect = Rect(
-            locationInWindow[0], locationInWindow[1],
-            locationInWindow[0] + width, locationInWindow[1] + height,
+            locationInWindow[0],
+            locationInWindow[1],
+            locationInWindow[0] + width,
+            locationInWindow[1] + height,
         )
         val snapshotBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
 
@@ -349,7 +350,7 @@ class PagerPageHolder(
                             pageIndex = page.index,
                             source = Buffer().write(itemBytes),
                             targetWidth = targetWidth,
-                            priority = UpscalePriorityGate.Priority.VISIBLE
+                            priority = UpscalePriorityGate.Priority.VISIBLE,
                         )
                     } catch (e: Throwable) {
                         xLogE("Upscaling failed for page ${page.index}", e)

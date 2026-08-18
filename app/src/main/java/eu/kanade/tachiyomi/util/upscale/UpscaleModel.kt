@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.util.upscale
 import dev.icerock.moko.resources.StringResource
 import tachiyomi.i18n.kmk.KMR
 
-
 data class BatchVariant(
     val batchSize: Int,
     val assetFileName: String,
@@ -24,7 +23,7 @@ enum class UpscaleModel(
     val tileContentSize: Int,
     val offset: Int,
     val batchVariants: List<BatchVariant>,
-    ) {
+) {
     REALESRGAN_ANIMEVIDEOV3(
         displayName = "Real-ESRGAN (4x)",
         descriptionRes = KMR.strings.desc_upscale_realesrgan_animevideov3,
@@ -33,8 +32,8 @@ enum class UpscaleModel(
         offset = 0,
         batchVariants = listOf(
             BatchVariant(batchSize = 1, assetFileName = "realesr_animevideov3_x4_384T_B1_float32.tflite"),
-            BatchVariant(batchSize = 3, assetFileName = "realesr_animevideov3_x4_384T_B3_float32.tflite")
-        )
+            BatchVariant(batchSize = 3, assetFileName = "realesr_animevideov3_x4_384T_B3_float32.tflite"),
+        ),
     ),
     WAIFU2X_SCALE2X(
         displayName = "waifu2x (2x, no denoise)",
@@ -55,7 +54,7 @@ enum class UpscaleModel(
         offset = 72,
         batchVariants = listOf(
             BatchVariant(batchSize = 1, assetFileName = "realcugan2x_no_denoise_384T_B1_float32.tflite"),
-            BatchVariant(batchSize = 3, assetFileName = "realcugan2x_no_denoise_384T_B3_float32.tflite")
+            BatchVariant(batchSize = 3, assetFileName = "realcugan2x_no_denoise_384T_B3_float32.tflite"),
         ),
     ),
     REALCUGAN_SCALE3X(
@@ -63,11 +62,11 @@ enum class UpscaleModel(
         descriptionRes = KMR.strings.desc_upscale_realcugan3x,
         scale = 3,
         tileContentSize = 384,
-        offset = 84,   // = paddingPerSide(14) × 2 × scale(3)
+        offset = 84, // = paddingPerSide(14) × 2 × scale(3)
         batchVariants = listOf(
             BatchVariant(batchSize = 1, assetFileName = "realcugan3x_no_denoise_384T_B1_float32.tflite"),
-            BatchVariant(batchSize = 3, assetFileName = "realcugan3x_no_denoise_384T_B3_float32.tflite")
-        )
+            BatchVariant(batchSize = 3, assetFileName = "realcugan3x_no_denoise_384T_B3_float32.tflite"),
+        ),
     ),
     ;
 

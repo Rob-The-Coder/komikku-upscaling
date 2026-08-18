@@ -118,7 +118,7 @@ object SettingsReaderScreen : SearchableSettings {
             getForkSettingsGroup(readerPreferences = readerPref),
             // SY <--
             // KMK -->
-            getUpscalingGroup(readerPreferences = readerPref)
+            getUpscalingGroup(readerPreferences = readerPref),
             // KMK <--
         )
     }

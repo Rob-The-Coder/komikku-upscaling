@@ -71,7 +71,7 @@ class AiUpscaler(
         }.apply { name = "AiUpscaler-Inference" }
     }
     private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
-    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE){
+    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE) {
         createInterpreter(DelegateMode.GPU) ?: createInterpreter(DelegateMode.CPU)!!
     }
     private val interpreter by interpreterLazy
@@ -112,7 +112,7 @@ class AiUpscaler(
 
             val newInterpreter = Interpreter(loadModelFile(), options)
             detectAndCacheLayouts(newInterpreter)
-            xLogD("Interpreter created with mode=${mode}, batch=${batchSize}, Shape: ${newInterpreter.getInputTensor(0).shape()}")
+            xLogD("Interpreter created with mode=$mode, batch=$batchSize, Shape: ${newInterpreter.getInputTensor(0).shape()}")
 
             newInterpreter
         } catch (e: Throwable) {
@@ -148,7 +148,6 @@ class AiUpscaler(
         return positions
     }
 
-
     /**
      * Extracts a tile of size 'paddedTileSize' into 'canvas', with
      * 'contentX'/'contentY' as the corner of the actual content (not the padding).
@@ -178,7 +177,7 @@ class AiUpscaler(
         shader.setLocalMatrix(
             Matrix().apply {
                 setTranslate(-(contentX - padding).toFloat(), -(contentY - padding).toFloat())
-            }
+            },
         )
         tilePaint.shader = shader
         canvas.drawRect(0f, 0f, paddedTileSize.toFloat(), paddedTileSize.toFloat(), tilePaint)

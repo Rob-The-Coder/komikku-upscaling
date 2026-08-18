@@ -266,7 +266,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = stringResource(KMR.strings.pref_empty_ai_cache),
                     subtitle = stringResource(KMR.strings.pref_empty_ai_cache_summary),
                     onClick = {
-                        scope.launch(Dispatchers.IO){
+                        scope.launch(Dispatchers.IO) {
                             AiUpscaleCache.clear()
                             withUIContext { context.toast(resource = KMR.strings.emptied_ai_cache) }
                         }

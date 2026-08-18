@@ -20,8 +20,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.UpscaleStatusIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
-import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.upscale.AiUpscaleCache
 import eu.kanade.tachiyomi.util.upscale.UpscalePriorityGate
 import exh.log.xLogE
 import kotlinx.coroutines.Job
@@ -258,7 +258,7 @@ class WebtoonPageHolder(
                             pageIndex = currentPage.index,
                             source = Buffer().write(sourceBytes),
                             targetWidth = targetWidth,
-                            priority = UpscalePriorityGate.Priority.VISIBLE
+                            priority = UpscalePriorityGate.Priority.VISIBLE,
                         )
                     } catch (e: Throwable) {
                         xLogE("Upscaling failed for page ${currentPage.index}", e)
@@ -268,11 +268,15 @@ class WebtoonPageHolder(
 
                 if (upscaledSource != null) {
                     withUIContext {
-                        frame.setImage(upscaledSource, false, ReaderPageImageView.Config(
-                            zoomDuration = viewer.config.doubleTapAnimDuration,
-                            minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
-                            cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
-                        ),)
+                        frame.setImage(
+                            upscaledSource,
+                            false,
+                            ReaderPageImageView.Config(
+                                zoomDuration = viewer.config.doubleTapAnimDuration,
+                                minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
+                                cropBorders = (viewer.config.imageCropBorders && viewer.isContinuous) || (viewer.config.continuousCropBorders && !viewer.isContinuous),
+                            ),
+                        )
                         upscaleIndicator?.showSuccess()
                     }
                 } else {

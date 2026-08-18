@@ -146,7 +146,6 @@ class UpscaleStatusIndicator @JvmOverloads constructor(
     fun showInProgress() {
         autoDismissJob?.cancel()
         setState(UpscaleBadgeState.InProgress, "showInProgress")
-
     }
 
     fun showSuccess(autoDismissMillis: Long = 1500) {

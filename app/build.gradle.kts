@@ -166,7 +166,7 @@ android {
         checkReleaseBuilds = false
     }
 
-    androidResources{
+    androidResources {
         noCompress += "tflite"
     }
 

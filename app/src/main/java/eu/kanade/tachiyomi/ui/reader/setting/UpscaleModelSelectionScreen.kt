@@ -38,8 +38,8 @@ import eu.kanade.tachiyomi.util.upscale.ModelDownloadManager
 import eu.kanade.tachiyomi.util.upscale.ModelDownloadState
 import eu.kanade.tachiyomi.util.upscale.ModelManifestLoader
 import eu.kanade.tachiyomi.util.upscale.UpscaleModel
-import eu.kanade.tachiyomi.util.upscale.toChapterDownloadState
 import eu.kanade.tachiyomi.util.upscale.progressPercent
+import eu.kanade.tachiyomi.util.upscale.toChapterDownloadState
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.Scaffold

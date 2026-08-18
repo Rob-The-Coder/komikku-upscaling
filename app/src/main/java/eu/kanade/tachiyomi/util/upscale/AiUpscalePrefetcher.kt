@@ -39,11 +39,17 @@ object AiUpscalePrefetcher {
     }
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
     private val requested = ConcurrentHashMap.newKeySet<String>()
+
     @Volatile private var currentChapterPages: List<ReaderPage>? = null
+
     @Volatile private var nextChapterProvider: (() -> List<ReaderPage>?)? = null
+
     @Volatile private var currentIndex: Int = -1
+
     @Volatile private var aheadCount: Int = 2
+
     @Volatile private var alreadyCoveredAhead: Int = 0
+
     @Volatile private var targetWidth: Int = 0
     private var fillJob: Job? = null
 
