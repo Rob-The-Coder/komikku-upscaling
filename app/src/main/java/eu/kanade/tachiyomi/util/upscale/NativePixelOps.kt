@@ -1,38 +1,58 @@
 package eu.kanade.tachiyomi.util.upscale
 
 import android.graphics.Bitmap
-import java.nio.ByteBuffer
 
+/**
+ * JNI bridge for pixel <-> tensor conversion. Operates on plain Kotlin
+ * FloatArrays (instead of a direct ByteBuffer) because the CompiledModel
+ * Kotlin API's TensorBuffer only exposes writeFloat(FloatArray) / readFloat(),
+ * with no raw buffer write path.
+ */
 object NativePixelOps {
     init {
         System.loadLibrary("aiupscaler")
     }
 
-    external fun writeBitmapToBufferNHWC(
+    /** Writes 'bitmap' pixels into 'outArray' starting at 'arrayPixelOffset', NHWC order, normalized to [0, 1]. */
+    external fun writeBitmapToArrayNHWC(
         bitmap: Bitmap,
-        directBuffer: ByteBuffer,
-        bufferPixelOffset: Int,
+        outArray: FloatArray,
+        arrayPixelOffset: Int,
         tileSize: Int,
     )
 
-    external fun writeBitmapToBufferNCHW(
+    /** Same as writeBitmapToArrayNHWC but writes planar (channel-major) order for NCHW models. */
+    external fun writeBitmapToArrayNCHW(
         bitmap: Bitmap,
-        directBuffer: ByteBuffer,
-        bufferPixelOffset: Int,
+        outArray: FloatArray,
+        arrayPixelOffset: Int,
         tileSize: Int,
     )
 
-    external fun readBufferToBitmapNHWC(
-        directBuffer: ByteBuffer,
-        bufferPixelOffset: Int,
+    /** Reads model output from 'inArray' starting at 'arrayPixelOffset' into 'targetBitmap', NHWC order. */
+    external fun readArrayToBitmapNHWC(
+        inArray: FloatArray,
+        arrayPixelOffset: Int,
         targetBitmap: Bitmap,
         outSize: Int,
     )
 
-    external fun readBufferToBitmapNCHW(
-        directBuffer: ByteBuffer,
-        bufferPixelOffset: Int,
+    /** Same as readArrayToBitmapNHWC but reads planar (channel-major) order for NCHW models. */
+    external fun readArrayToBitmapNCHW(
+        inArray: FloatArray,
+        arrayPixelOffset: Int,
         targetBitmap: Bitmap,
         outSize: Int,
+    )
+
+    external fun readArrayToBitmapPixelShuffle(
+        outArray: FloatArray,
+        inArray: FloatArray,
+        arrayPixelOffset: Int,
+        targetBitmap: Bitmap,
+        inTileSize: Int,
+        scale: Int,
+        isInputNhwc: Boolean,
+        isOutputNhwc: Boolean
     )
 }

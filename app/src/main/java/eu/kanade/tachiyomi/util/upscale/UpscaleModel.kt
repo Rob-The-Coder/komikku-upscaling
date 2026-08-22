@@ -2,7 +2,7 @@ package eu.kanade.tachiyomi.util.upscale
 
 import dev.icerock.moko.resources.StringResource
 import tachiyomi.i18n.kmk.KMR
-
+enum class TensorLayout { NHWC, NCHW }
 data class BatchVariant(
     val batchSize: Int,
     val assetFileName: String,
@@ -23,6 +23,8 @@ enum class UpscaleModel(
     val tileContentSize: Int,
     val offset: Int,
     val batchVariants: List<BatchVariant>,
+    val inputLayout: TensorLayout = TensorLayout.NHWC,
+    val outputLayout: TensorLayout = TensorLayout.NHWC,
 ) {
     REALESRGAN_ANIMEVIDEOV3(
         displayName = "Real-ESRGAN (4x)",

@@ -14,7 +14,7 @@ markdown = "0.39.2"
 junit = "6.0.3"
 materialKolor = "5.0.0-alpha07"
 
-litert = "1.4.2"
+litert = "2.2.0"
 material3Version = "1.4.0"
 
 [libraries]

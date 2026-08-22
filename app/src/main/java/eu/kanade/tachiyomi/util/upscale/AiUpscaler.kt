@@ -8,23 +8,19 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Shader
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.LiteRtException
 import exh.log.xLogD
 import exh.log.xLogW
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
-import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.File
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
 import java.util.concurrent.Executors
 
 /**
- * Wrapper per l'inferenza TFLite di Real-ESRGAN, con tiling per gestire
- * pagine manga più grandi della dimensione di input fissa del modello.
+ * Wrapper for LiteRT (CompiledModel API) inference of Real-ESRGAN, with tiling to
+ * handle manga pages larger than the model's fixed input size.
  */
 class AiUpscaler(
     private val context: Application,
@@ -32,103 +28,138 @@ class AiUpscaler(
     requestedBatchSize: Int,
     requestedOverlap: Int,
 ) {
+    /** Batch variant (batch size + .tflite asset) resolved for the current request. */
     private val variant = model.variantFor(requestedBatchSize)
+
+    /** Number of tiles processed in a single inference call. */
     private val batchSize = variant.batchSize
+
+    /** Hardware target to try when creating the CompiledModel, with GPU -> CPU fallback. */
     private enum class DelegateMode { GPU, CPU }
-    private enum class TensorLayout { NHWC, NCHW }
+
+    /** Side length of a tile produced by the model. */
     private val outSize get() = model.outSize
+
+    /** Side length of a tile fed to the model, content + padding. */
     private val paddedTileSize get() = model.paddedTileSize
+
+    /** Input tensor layout, known statically from the conversion pipeline, not detected at runtime. */
+    private val inputLayout get() = model.inputLayout
+
+    /** Output tensor layout, known statically from the conversion pipeline, not detected at runtime. */
+    private val outputLayout get() = model.outputLayout
 
     /*
     Constraints: Odd overlap is truncated to even (margin = overlap/2);
     overlap too large compared to tileContentSize would cause 'step' to collapse to zero or negative in collectTilePositions(),
     causing a loop that never advances. We avoid it by keeping it under the middle of the tile.
      */
+    /** Overlap (in pixels, always even) between adjacent tiles, to soften seam artifacts. */
     private val overlap = requestedOverlap.coerceIn(0, model.tileContentSize / 2 - 1).let { it - (it % 2) }
 
-    // Buffers sized for the whole batch, not per single tile
-    private val batchInputBuffer by lazy {
-        ByteBuffer.allocateDirect(batchSize * 4 * paddedTileSize * paddedTileSize * 3).order(ByteOrder.nativeOrder())
+    // Arrays sized for the whole batch, not per single tile
+    /** Reusable input buffer for each batch, filled by the native code before every run(). */
+    private val batchInputArray by lazy {
+        FloatArray(batchSize * paddedTileSize * paddedTileSize * 3)
     }
-    private val batchOutputBuffer = ByteBuffer.allocateDirect(batchSize * 4 * outSize * outSize * 3).order(ByteOrder.nativeOrder())
+
+    /** Reusable input Bitmaps used as extraction targets for each tile, one per batch slot. */
     private val inputTiles by lazy {
         Array(batchSize) { Bitmap.createBitmap(paddedTileSize, paddedTileSize, Bitmap.Config.ARGB_8888) }
     }
+
+    /** Canvases bound to 'inputTiles', used to draw each tile before inference. */
     private val inputCanvases by lazy { inputTiles.map { Canvas(it) } }
+
+    /** Reusable output Bitmaps used as write targets for the results, one per batch slot. */
     private val reusableOutputTiles by lazy {
         Array(batchSize) { Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888) }
     }
+
+    /** Top-left corner of a tile's content area within the source page. */
     private data class TilePos(val x: Int, val y: Int)
-    private lateinit var inputLayout: TensorLayout
-    private lateinit var outputLayout: TensorLayout
+
+    /** Reused Paint for drawing padded tiles via BitmapShader. */
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    // Single dedicated thread: interpreter always created and invoked here
+    // Single dedicated thread: CompiledModel always created and invoked here
+    /** Dedicated single-thread executor on which the CompiledModel is always created and invoked. */
     private val inferenceExecutor = Executors.newSingleThreadExecutor { r ->
         Thread {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             r.run()
         }.apply { name = "AiUpscaler-Inference" }
     }
+
+    /** Coroutine dispatcher backed by 'inferenceExecutor', used to confine inference to the dedicated thread. */
     private val inferenceDispatcher = inferenceExecutor.asCoroutineDispatcher()
-    private val interpreterLazy = lazy(LazyThreadSafetyMode.NONE) {
-        createInterpreter(DelegateMode.GPU) ?: createInterpreter(DelegateMode.CPU)!!
-    }
-    private val interpreter by interpreterLazy
-    private fun detectLayout(shape: IntArray): TensorLayout {
-        // Channel with value 3 is at index 1 for NCHW, at index 3 for NHWC
-        return if (shape[1] == 3) TensorLayout.NCHW else TensorLayout.NHWC
-    }
-    private fun detectAndCacheLayouts(interpreter: Interpreter) {
-        val inTensor = interpreter.getInputTensor(0)
-        val outTensor = interpreter.getOutputTensor(0)
 
-        inputLayout = detectLayout(inTensor.shape())
-        outputLayout = detectLayout(outTensor.shape())
-
-        xLogD("Input: layout=$inputLayout")
-        xLogD("Output: layout=$outputLayout")
+    /** Lazy CompiledModel initialization: tries GPU first, falls back to CPU if GPU is unavailable. */
+    private val compiledModelLazy = lazy(LazyThreadSafetyMode.NONE) {
+        createCompiledModel(DelegateMode.GPU) ?: createCompiledModel(DelegateMode.CPU)!!
     }
-    private val compatList = CompatibilityList()
-    private fun createInterpreter(mode: DelegateMode): Interpreter? {
-        /*
-        For the GPU, let's first check the official compatibility list:
-        if the device is not in the list, we don't even try, saving
-        the cost of an attempt that we already know would fail or go wrong.
-         */
-        if (mode == DelegateMode.GPU && !compatList.isDelegateSupportedOnThisDevice) {
-            return null
+    private val compiledModel by compiledModelLazy
+
+    /** Input buffers pre-allocated by the CompiledModel, reused across inference batches. */
+    private val inputBuffersLazy = lazy(LazyThreadSafetyMode.NONE) { compiledModel.createInputBuffers() }
+
+    /** Output buffers pre-allocated by the CompiledModel, reused across inference batches. */
+    private val outputBuffersLazy = lazy(LazyThreadSafetyMode.NONE) { compiledModel.createOutputBuffers() }
+    private val inputBuffers by inputBuffersLazy
+    private val outputBuffers by outputBuffersLazy
+
+    /**
+     * Creates a CompiledModel for the requested accelerator. Returns null (instead of
+     * propagating the exception) when GPU creation fails, to allow falling back to CPU;
+     * CPU mode always propagates, since there is no further fallback available.
+     */
+    private fun createCompiledModel(mode: DelegateMode): CompiledModel? {
+        val accelerator = when (mode) {
+            DelegateMode.GPU -> Accelerator.GPU
+            DelegateMode.CPU -> Accelerator.CPU
         }
 
         return try {
-            val options = Interpreter.Options()
-            when (mode) {
-                DelegateMode.GPU -> {
-                    val gpuOptions = compatList.bestOptionsForThisDevice
-                    options.addDelegate(GpuDelegate(gpuOptions))
-                }
-                DelegateMode.CPU -> options.setNumThreads(4)
-            }
-
-            val newInterpreter = Interpreter(loadModelFile(), options)
-            detectAndCacheLayouts(newInterpreter)
-            xLogD("Interpreter created with mode=$mode, batch=$batchSize, Shape: ${newInterpreter.getInputTensor(0).shape()}")
-
-            newInterpreter
-        } catch (e: Throwable) {
-            xLogW("GPU interpret creation failed", e)
+            val newModel = CompiledModel.create(
+                modelFilePath(),
+                CompiledModel.Options(accelerator),
+            )
+            xLogD("CompiledModel created with accelerator=$accelerator, batch=$batchSize")
+            newModel
+        } catch (e: LiteRtException) {
+            xLogW("CompiledModel creation failed for accelerator=$accelerator", e)
             if (mode == DelegateMode.CPU) throw e else null
         }
     }
 
-    private fun loadModelFile(): ByteBuffer {
-        val file = File(context.filesDir, "models/${variant.assetFileName}")
-        FileInputStream(file).use { inputStream ->
-            val fileChannel = inputStream.channel
-            return fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
+    /** Absolute filesystem path of the bundled .tflite file for the current variant. */
+    private fun modelFilePath(): String {
+        //return File(context.filesDir, "models/${variant.assetFileName}").absolutePath
+        val testFileName = "realesr_animevideov3_x4_384T_static.tflite" // Nome del tuo file in assets
+        val targetFile = File(context.cacheDir, testFileName)
+
+        try {
+            // Copiamo SEMPRE per assicurarci di non usare un file corrotto in cache
+            context.assets.open(testFileName).use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            val sizeKb = targetFile.length() / 1024
+            xLogD("Modello copiato con successo. Dimensione in cache: $sizeKb KB")
+
+            if (sizeKb < 100) {
+                xLogW("ATTENZIONE: Il modello è troppo piccolo ($sizeKb KB)! Probabilmente non è valido.")
+            }
+        } catch (e: Exception) {
+            xLogW("Errore durante la copia del file da assets", e)
         }
+
+        // Copia il file dagli assets alla cache dell'app solo se non esiste già
+        return targetFile.absolutePath
     }
 
+    /** Computes the top-left positions of all tiles needed to cover 'input' with stride 'step'. */
     private fun collectTilePositions(input: Bitmap, step: Int): List<TilePos> {
         val positions = mutableListOf<TilePos>()
         val contentSize = model.tileContentSize
@@ -184,6 +215,7 @@ class AiUpscaler(
         tilePaint.shader = null
     }
 
+    /** Runs full upscale of 'input', tile by tile in batches, and composes the final result. */
     suspend fun upscale(input: Bitmap): Bitmap {
         val scale = model.scale
         val contentSize = model.tileContentSize
@@ -202,7 +234,7 @@ class AiUpscaler(
 
             // Reuse input Bitmaps and Canvases to extract tiles
             for (i in 0 until batchSize) {
-                val pos = if (i < realCount) batch[i] else batch.last() // Padding duplicando l'ultimo se necessario
+                val pos = if (i < realCount) batch[i] else batch.last() // Pad by duplicating the last one if needed
                 drawPaddedTile(input, inputCanvases[i], pos.x, pos.y)
             }
 
@@ -229,50 +261,55 @@ class AiUpscaler(
         return output
     }
 
+    /** Runs a single inference on the 'tiles' batch, writing/reading pixels via NativePixelOps. */
     private fun runBatchInference(tiles: Array<Bitmap>): Array<Bitmap> {
-        val activeInterpreter = interpreter
-
         val t0 = System.currentTimeMillis()
 
-        // Native C++ write into buffers
-        batchInputBuffer.clear()
+        // Native C++ write into the reusable input FloatArray
         val tilePixelCount = paddedTileSize * paddedTileSize
         for (i in tiles.indices) {
-            val pixelOffset = i * tilePixelCount
+            val arrayOffset = i * tilePixelCount
             if (inputLayout == TensorLayout.NHWC) {
-                NativePixelOps.writeBitmapToBufferNHWC(tiles[i], batchInputBuffer, pixelOffset, paddedTileSize)
+                NativePixelOps.writeBitmapToArrayNHWC(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
             } else {
-                NativePixelOps.writeBitmapToBufferNCHW(tiles[i], batchInputBuffer, pixelOffset, paddedTileSize)
+                NativePixelOps.writeBitmapToArrayNCHW(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
             }
         }
-        batchInputBuffer.rewind()
         val t1 = System.currentTimeMillis()
 
-        // TFLite running
-        batchOutputBuffer.clear()
-        activeInterpreter.run(batchInputBuffer, batchOutputBuffer)
+        // LiteRT CompiledModel run
+        inputBuffers[0].writeFloat(batchInputArray)
+        compiledModel.run(inputBuffers, outputBuffers)
+        val outputArray = outputBuffers[0].readFloat()
         val t2 = System.currentTimeMillis()
 
-        // Native C++ read from buffer to reusable Bitmaps
-        batchOutputBuffer.rewind()
-        val outTilePixelCount = outSize * outSize
+        // Native C++ read from the FloatArray into reusable Bitmaps
+        // NUOVA LOGICA: il modello restituisce [Batch, paddedTileSize, paddedTileSize, 3 * scale^2]
+        // Il PixelShuffle viene fatto on-the-fly dalla CPU in C++
         for (i in tiles.indices) {
-            val pixelOffset = i * outTilePixelCount
-            if (outputLayout == TensorLayout.NHWC) {
-                NativePixelOps.readBufferToBitmapNHWC(batchOutputBuffer, pixelOffset, reusableOutputTiles[i], outSize)
-            } else {
-                NativePixelOps.readBufferToBitmapNCHW(batchOutputBuffer, pixelOffset, reusableOutputTiles[i], outSize)
-            }
+            val arrayOffset = i * tilePixelCount
+
+            NativePixelOps.readArrayToBitmapPixelShuffle(
+                outArray = outputArray,
+                inArray = batchInputArray,
+                arrayPixelOffset = arrayOffset,
+                targetBitmap = reusableOutputTiles[i],
+                inTileSize = paddedTileSize,
+                scale = model.scale,
+                isInputNhwc = (inputLayout == TensorLayout.NHWC),
+                isOutputNhwc = (outputLayout == TensorLayout.NHWC)
+            )
         }
         val t3 = System.currentTimeMillis()
 
-        xLogD("Native write: ${t1 - t0}ms | TFLite run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
+        xLogD("Native write: ${t1 - t0}ms | CompiledModel run(): ${t2 - t1}ms | Native read: ${t3 - t2}ms | Total: ${t3 - t0}ms")
 
         return reusableOutputTiles
     }
 
+    /** Releases the CompiledModel (if created) and stops the dedicated inference thread. */
     fun close() {
-        if (interpreterLazy.isInitialized()) interpreter.close()
+        if (compiledModelLazy.isInitialized()) compiledModel.close()
         inferenceExecutor.shutdown()
     }
 }

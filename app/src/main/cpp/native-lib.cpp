@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-// Inline helper to clamp float values to uint8
+// Clamps a float in [0, 1] to a uint8 in [0, 255].
 inline uint8_t floatToUint8(float val) {
     float scaled = val * 255.0f;
     if (scaled <= 0.0f) return 0;
@@ -11,13 +11,16 @@ inline uint8_t floatToUint8(float val) {
     return static_cast<uint8_t>(scaled + 0.5f);
 }
 
+// Writes bitmap pixels into a Kotlin FloatArray in NHWC order, normalized to [0, 1].
+// The array is the one later passed to TensorBuffer.writeFloat(), since the
+// CompiledModel Kotlin API does not expose a raw ByteBuffer write path.
 extern "C" JNIEXPORT void JNICALL
-Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNHWC(
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToArrayNHWC(
         JNIEnv* env,
         jobject /* this */,
         jobject bitmap,
-        jobject directBuffer,
-        jint bufferPixelOffset,
+        jfloatArray outArray,
+        jint arrayPixelOffset,
         jint tileSize
 ) {
     AndroidBitmapInfo info;
@@ -31,8 +34,8 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNHWC(
     }
 
     auto* src = static_cast<const uint8_t*>(pixels);
-    auto* dstBuffer = static_cast<float*>(env->GetDirectBufferAddress(directBuffer));
-    float* dst = dstBuffer + (bufferPixelOffset * 3);
+    jfloat* dstArray = env->GetFloatArrayElements(outArray, nullptr);
+    float* dst = dstArray + (arrayPixelOffset * 3);
 
     int totalPixels = tileSize * tileSize;
     for (int i = 0; i < totalPixels; ++i) {
@@ -43,16 +46,18 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNHWC(
         dst[dstIdx + 2] = src[srcIdx + 2] / 255.0f; // B
     }
 
+    env->ReleaseFloatArrayElements(outArray, dstArray, 0);
     AndroidBitmap_unlockPixels(env, bitmap);
 }
 
+// Same as writeBitmapToArrayNHWC but writes planar (channel-major) order for NCHW models.
 extern "C" JNIEXPORT void JNICALL
-Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNCHW(
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToArrayNCHW(
         JNIEnv* env,
         jobject /* this */,
         jobject bitmap,
-        jobject directBuffer,
-        jint bufferPixelOffset,
+        jfloatArray outArray,
+        jint arrayPixelOffset,
         jint tileSize
 ) {
     AndroidBitmapInfo info;
@@ -66,8 +71,8 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNCHW(
     }
 
     auto* src = static_cast<const uint8_t*>(pixels);
-    auto* dstBuffer = static_cast<float*>(env->GetDirectBufferAddress(directBuffer));
-    float* dst = dstBuffer + (bufferPixelOffset * 3);
+    jfloat* dstArray = env->GetFloatArrayElements(outArray, nullptr);
+    float* dst = dstArray + (arrayPixelOffset * 3);
 
     int totalPixels = tileSize * tileSize;
     float* rPlane = dst;
@@ -81,15 +86,18 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_writeBitmapToBufferNCHW(
         bPlane[i] = src[srcIdx + 2] / 255.0f;
     }
 
+    env->ReleaseFloatArrayElements(outArray, dstArray, 0);
     AndroidBitmap_unlockPixels(env, bitmap);
 }
 
+// Reads model output back from a Kotlin FloatArray (as returned by TensorBuffer.readFloat())
+// into a reusable output Bitmap, NHWC order.
 extern "C" JNIEXPORT void JNICALL
-Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNHWC(
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapNHWC(
         JNIEnv* env,
         jobject /* this */,
-        jobject directBuffer,
-        jint bufferPixelOffset,
+        jfloatArray inArray,
+        jint arrayPixelOffset,
         jobject targetBitmap,
         jint outSize
 ) {
@@ -104,8 +112,8 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNHWC(
     }
 
     auto* dst = static_cast<uint8_t*>(pixels);
-    const float* srcBuffer = static_cast<const float*>(env->GetDirectBufferAddress(directBuffer));
-    const float* src = srcBuffer + (bufferPixelOffset * 3);
+    jfloat* srcArray = env->GetFloatArrayElements(inArray, nullptr);
+    const float* src = srcArray + (arrayPixelOffset * 3);
 
     int totalPixels = outSize * outSize;
     for (int i = 0; i < totalPixels; ++i) {
@@ -117,15 +125,18 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNHWC(
         dst[dstIdx + 3] = 255;                            // Alpha
     }
 
+    // JNI_ABORT: we only read from inArray, no need to copy unmodified data back.
+    env->ReleaseFloatArrayElements(inArray, srcArray, JNI_ABORT);
     AndroidBitmap_unlockPixels(env, targetBitmap);
 }
 
+// Same as readArrayToBitmapNHWC but reads planar (channel-major) order for NCHW models.
 extern "C" JNIEXPORT void JNICALL
-Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNCHW(
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapNCHW(
         JNIEnv* env,
         jobject /* this */,
-        jobject directBuffer,
-        jint bufferPixelOffset,
+        jfloatArray inArray,
+        jint arrayPixelOffset,
         jobject targetBitmap,
         jint outSize
 ) {
@@ -140,8 +151,8 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNCHW(
     }
 
     auto* dst = static_cast<uint8_t*>(pixels);
-    const float* srcBuffer = static_cast<const float*>(env->GetDirectBufferAddress(directBuffer));
-    const float* src = srcBuffer + (bufferPixelOffset * 3);
+    jfloat* srcArray = env->GetFloatArrayElements(inArray, nullptr);
+    const float* src = srcArray + (arrayPixelOffset * 3);
 
     int totalPixels = outSize * outSize;
     const float* rPlane = src;
@@ -156,5 +167,96 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readBufferToBitmapNCHW(
         dst[dstIdx + 3] = 255;
     }
 
+    env->ReleaseFloatArrayElements(inArray, srcArray, JNI_ABORT);
+    AndroidBitmap_unlockPixels(env, targetBitmap);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuffle(
+        JNIEnv* env,
+        jobject /* this */,
+        jfloatArray outArray,
+        jfloatArray inArray,
+        jint arrayPixelOffset,
+        jobject targetBitmap,
+        jint inTileSize,
+        jint scale,
+        jboolean isInputNhwc,
+        jboolean isOutputNhwc
+) {
+    AndroidBitmapInfo info;
+    void* pixels = nullptr;
+
+    if (AndroidBitmap_getInfo(env, targetBitmap, &info) < 0 || info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return;
+    if (AndroidBitmap_lockPixels(env, targetBitmap, &pixels) < 0) return;
+
+    auto* dst = static_cast<uint8_t*>(pixels);
+
+    jfloat* srcOutArray = env->GetFloatArrayElements(outArray, nullptr);
+    jfloat* srcInArray = env->GetFloatArrayElements(inArray, nullptr);
+
+    int numChannels = 3 * scale * scale; // 48 per x4, 12 per x2
+    int spatialSize = inTileSize * inTileSize;
+    int outSize = inTileSize * scale;
+
+    const float* srcOut = srcOutArray + (arrayPixelOffset * numChannels);
+    const float* srcIn = srcInArray + (arrayPixelOffset * 3);
+
+    for (int y = 0; y < inTileSize; ++y) {
+        for (int x = 0; x < inTileSize; ++x) {
+
+            int spatialIdx = y * inTileSize + x;
+            float baseR, baseG, baseB;
+
+            // 1. Leggiamo il pixel dell'immagine BASE rispettando il suo Layout
+            if (isInputNhwc) {
+                int inIdx = spatialIdx * 3;
+                baseR = srcIn[inIdx + 0];
+                baseG = srcIn[inIdx + 1];
+                baseB = srcIn[inIdx + 2];
+            } else { // NCHW
+                baseR = srcIn[spatialIdx];
+                baseG = srcIn[spatialSize + spatialIdx];
+                baseB = srcIn[spatialSize * 2 + spatialIdx];
+            }
+
+            // 2. Espandiamo la Skip Connection
+            for (int dy = 0; dy < scale; ++dy) {
+                int outY = y * scale + dy;
+                for (int dx = 0; dx < scale; ++dx) {
+                    int outX = x * scale + dx;
+
+                    // Mappatura canali identica al PixelShuffle di PyTorch
+                    int rChannel = (0 * scale + dy) * scale + dx;
+                    int gChannel = (1 * scale + dy) * scale + dx;
+                    int bChannel = (2 * scale + dy) * scale + dx;
+
+                    float detR, detG, detB;
+
+                    // 3. Leggiamo i Dettagli rispettando il Layout di Output
+                    if (isOutputNhwc) {
+                        int inputPixelIdx = spatialIdx * numChannels;
+                        detR = srcOut[inputPixelIdx + rChannel];
+                        detG = srcOut[inputPixelIdx + gChannel];
+                        detB = srcOut[inputPixelIdx + bChannel];
+                    } else { // NCHW
+                        detR = srcOut[rChannel * spatialSize + spatialIdx];
+                        detG = srcOut[gChannel * spatialSize + spatialIdx];
+                        detB = srcOut[bChannel * spatialSize + spatialIdx];
+                    }
+
+                    // 4. Somma (Dettaglio + Base) e Clamp a 255
+                    int dstIdx = (outY * outSize + outX) * 4;
+                    dst[dstIdx + 0] = floatToUint8(detR + baseR);
+                    dst[dstIdx + 1] = floatToUint8(detG + baseG);
+                    dst[dstIdx + 2] = floatToUint8(detB + baseB);
+                    dst[dstIdx + 3] = 255;
+                }
+            }
+        }
+    }
+
+    env->ReleaseFloatArrayElements(outArray, srcOutArray, JNI_ABORT);
+    env->ReleaseFloatArrayElements(inArray, srcInArray, JNI_ABORT);
     AndroidBitmap_unlockPixels(env, targetBitmap);
 }
