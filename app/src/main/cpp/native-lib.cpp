@@ -171,6 +171,12 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapNCHW(
     AndroidBitmap_unlockPixels(env, targetBitmap);
 }
 
+// Reads the model's raw pre-PixelShuffle output (48 = 3*scale^2 channels) from 'outArray',
+// applies PixelShuffle and the residual skip connection (nearest-neighbor upsample of the
+// original tile from 'inArray', added to the shuffled detail) directly into 'targetBitmap'.
+// Both PixelShuffle and the skip connection were cut from the traced PyTorch forward before
+// export (litert_torch/ML Drift could not compile the resulting 6D Reshape/Transpose pair for
+// GPU), so this function reproduces both steps on CPU instead.
 extern "C" JNIEXPORT void JNICALL
 Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuffle(
         JNIEnv* env,
@@ -195,7 +201,7 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuff
     jfloat* srcOutArray = env->GetFloatArrayElements(outArray, nullptr);
     jfloat* srcInArray = env->GetFloatArrayElements(inArray, nullptr);
 
-    int numChannels = 3 * scale * scale; // 48 per x4, 12 per x2
+    int numChannels = 3 * scale * scale; // 48 for x4, 12 for x2
     int spatialSize = inTileSize * inTileSize;
     int outSize = inTileSize * scale;
 
@@ -204,11 +210,10 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuff
 
     for (int y = 0; y < inTileSize; ++y) {
         for (int x = 0; x < inTileSize; ++x) {
-
             int spatialIdx = y * inTileSize + x;
             float baseR, baseG, baseB;
 
-            // 1. Leggiamo il pixel dell'immagine BASE rispettando il suo Layout
+            // 1. Read the base (low-res) pixel, respecting the input tensor layout.
             if (isInputNhwc) {
                 int inIdx = spatialIdx * 3;
                 baseR = srcIn[inIdx + 0];
@@ -220,32 +225,34 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuff
                 baseB = srcIn[spatialSize * 2 + spatialIdx];
             }
 
-            // 2. Espandiamo la Skip Connection
+            // 2. Expand the skip connection: same base value replicated across the
+            // whole scale x scale output block, equivalent to a nearest-neighbor upsample.
             for (int dy = 0; dy < scale; ++dy) {
                 int outY = y * scale + dy;
                 for (int dx = 0; dx < scale; ++dx) {
                     int outX = x * scale + dx;
 
-                    // Mappatura canali identica al PixelShuffle di PyTorch
+                    // Channel mapping identical to PyTorch's PixelShuffle:
+                    // output[c, h*r+i, w*r+j] = input[c*r^2 + i*r + j, h, w]
                     int rChannel = (0 * scale + dy) * scale + dx;
                     int gChannel = (1 * scale + dy) * scale + dx;
                     int bChannel = (2 * scale + dy) * scale + dx;
 
                     float detR, detG, detB;
 
-                    // 3. Leggiamo i Dettagli rispettando il Layout di Output
+                    // 3. Read the detail channels, respecting the output tensor layout.
                     if (isOutputNhwc) {
-                        int inputPixelIdx = spatialIdx * numChannels;
-                        detR = srcOut[inputPixelIdx + rChannel];
-                        detG = srcOut[inputPixelIdx + gChannel];
-                        detB = srcOut[inputPixelIdx + bChannel];
+                        int pixelIdx = spatialIdx * numChannels;
+                        detR = srcOut[pixelIdx + rChannel];
+                        detG = srcOut[pixelIdx + gChannel];
+                        detB = srcOut[pixelIdx + bChannel];
                     } else { // NCHW
                         detR = srcOut[rChannel * spatialSize + spatialIdx];
                         detG = srcOut[gChannel * spatialSize + spatialIdx];
                         detB = srcOut[bChannel * spatialSize + spatialIdx];
                     }
 
-                    // 4. Somma (Dettaglio + Base) e Clamp a 255
+                    // 4. Sum detail + base and write the final pixel.
                     int dstIdx = (outY * outSize + outX) * 4;
                     dst[dstIdx + 0] = floatToUint8(detR + baseR);
                     dst[dstIdx + 1] = floatToUint8(detG + baseG);
@@ -257,6 +264,96 @@ Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuff
     }
 
     env->ReleaseFloatArrayElements(outArray, srcOutArray, JNI_ABORT);
+    env->ReleaseFloatArrayElements(inArray, srcInArray, JNI_ABORT);
+    AndroidBitmap_unlockPixels(env, targetBitmap);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_upscale_NativePixelOps_readArrayToBitmapPixelShuffleInt8(
+        JNIEnv* env,
+        jobject /* this */,
+        jbyteArray outArray,        // int8 quantized model output
+        jfloatArray inArray,        // float32 original tile, unquantized (skip connection base)
+        jint arrayPixelOffset,
+        jobject targetBitmap,
+        jint inTileSize,
+        jint scale,
+        jboolean isInputNhwc,
+        jboolean isOutputNhwc,
+        jfloat outputScale,
+        jint outputZeroPoint
+) {
+    AndroidBitmapInfo info;
+    void* pixels = nullptr;
+
+    if (AndroidBitmap_getInfo(env, targetBitmap, &info) < 0 || info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return;
+    if (AndroidBitmap_lockPixels(env, targetBitmap, &pixels) < 0) return;
+
+    auto* dst = static_cast<uint8_t*>(pixels);
+
+    jbyte* srcOutArray = env->GetByteArrayElements(outArray, nullptr);
+    jfloat* srcInArray = env->GetFloatArrayElements(inArray, nullptr);
+
+    int numChannels = 3 * scale * scale;
+    int spatialSize = inTileSize * inTileSize;
+    int outSize = inTileSize * scale;
+
+    const jbyte* srcOut = srcOutArray + (arrayPixelOffset * numChannels);
+    const float* srcIn = srcInArray + (arrayPixelOffset * 3);
+
+    // Dequantizes one raw int8 model output value back to a real-valued float.
+    auto dequantize = [outputScale, outputZeroPoint](jbyte raw) -> float {
+        return static_cast<float>(static_cast<int>(raw) - outputZeroPoint) * outputScale;
+    };
+
+    for (int y = 0; y < inTileSize; ++y) {
+        for (int x = 0; x < inTileSize; ++x) {
+            int spatialIdx = y * inTileSize + x;
+            float baseR, baseG, baseB;
+
+            if (isInputNhwc) {
+                int inIdx = spatialIdx * 3;
+                baseR = srcIn[inIdx + 0];
+                baseG = srcIn[inIdx + 1];
+                baseB = srcIn[inIdx + 2];
+            } else {
+                baseR = srcIn[spatialIdx];
+                baseG = srcIn[spatialSize + spatialIdx];
+                baseB = srcIn[spatialSize * 2 + spatialIdx];
+            }
+
+            for (int dy = 0; dy < scale; ++dy) {
+                int outY = y * scale + dy;
+                for (int dx = 0; dx < scale; ++dx) {
+                    int outX = x * scale + dx;
+
+                    int rChannel = (0 * scale + dy) * scale + dx;
+                    int gChannel = (1 * scale + dy) * scale + dx;
+                    int bChannel = (2 * scale + dy) * scale + dx;
+
+                    float detR, detG, detB;
+                    if (isOutputNhwc) {
+                        int pixelIdx = spatialIdx * numChannels;
+                        detR = dequantize(srcOut[pixelIdx + rChannel]);
+                        detG = dequantize(srcOut[pixelIdx + gChannel]);
+                        detB = dequantize(srcOut[pixelIdx + bChannel]);
+                    } else {
+                        detR = dequantize(srcOut[rChannel * spatialSize + spatialIdx]);
+                        detG = dequantize(srcOut[gChannel * spatialSize + spatialIdx]);
+                        detB = dequantize(srcOut[bChannel * spatialSize + spatialIdx]);
+                    }
+
+                    int dstIdx = (outY * outSize + outX) * 4;
+                    dst[dstIdx + 0] = floatToUint8(detR + baseR);
+                    dst[dstIdx + 1] = floatToUint8(detG + baseG);
+                    dst[dstIdx + 2] = floatToUint8(detB + baseB);
+                    dst[dstIdx + 3] = 255;
+                }
+            }
+        }
+    }
+
+    env->ReleaseByteArrayElements(outArray, srcOutArray, JNI_ABORT);
     env->ReleaseFloatArrayElements(inArray, srcInArray, JNI_ABORT);
     AndroidBitmap_unlockPixels(env, targetBitmap);
 }

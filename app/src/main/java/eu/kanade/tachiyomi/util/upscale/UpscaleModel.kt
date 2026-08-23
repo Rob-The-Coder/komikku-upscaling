@@ -36,6 +36,10 @@ enum class UpscaleModel(
             BatchVariant(batchSize = 1, assetFileName = "realesr_animevideov3_x4_384T_B1_float32.tflite"),
             BatchVariant(batchSize = 3, assetFileName = "realesr_animevideov3_x4_384T_B3_float32.tflite"),
         ),
+        // TODO: litert_torch preserves PyTorch's native NCHW layout, unlike the previous onnx2tf export.
+        //  Re-verify once the litert_torch conversion pipeline is finalized and wired to the real asset download flow.
+        inputLayout = TensorLayout.NCHW,
+        outputLayout = TensorLayout.NCHW,
     ),
     WAIFU2X_SCALE2X(
         displayName = "waifu2x (2x, no denoise)",

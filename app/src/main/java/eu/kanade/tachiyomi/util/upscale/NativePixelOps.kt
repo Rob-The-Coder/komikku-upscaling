@@ -29,22 +29,12 @@ object NativePixelOps {
         tileSize: Int,
     )
 
-    /** Reads model output from 'inArray' starting at 'arrayPixelOffset' into 'targetBitmap', NHWC order. */
-    external fun readArrayToBitmapNHWC(
-        inArray: FloatArray,
-        arrayPixelOffset: Int,
-        targetBitmap: Bitmap,
-        outSize: Int,
-    )
-
-    /** Same as readArrayToBitmapNHWC but reads planar (channel-major) order for NCHW models. */
-    external fun readArrayToBitmapNCHW(
-        inArray: FloatArray,
-        arrayPixelOffset: Int,
-        targetBitmap: Bitmap,
-        outSize: Int,
-    )
-
+    /**
+     * Reads the model's raw pre-PixelShuffle output ('outArray') and the original low-res tile
+     * ('inArray'), applies PixelShuffle and the residual skip connection, and writes the result
+     * into 'targetBitmap'. See native-lib.cpp for the full explanation of why this step moved
+     * from the model graph to native code.
+     */
     external fun readArrayToBitmapPixelShuffle(
         outArray: FloatArray,
         inArray: FloatArray,
@@ -53,6 +43,20 @@ object NativePixelOps {
         inTileSize: Int,
         scale: Int,
         isInputNhwc: Boolean,
-        isOutputNhwc: Boolean
+        isOutputNhwc: Boolean,
+    )
+
+    /** Same as readArrayToBitmapPixelShuffle, but 'outArray' holds raw int8 quantized model output, dequantized inline using 'outputScale'/'outputZeroPoint'. */
+    external fun readArrayToBitmapPixelShuffleInt8(
+        outArray: ByteArray,
+        inArray: FloatArray,
+        arrayPixelOffset: Int,
+        targetBitmap: Bitmap,
+        inTileSize: Int,
+        scale: Int,
+        isInputNhwc: Boolean,
+        isOutputNhwc: Boolean,
+        outputScale: Float,
+        outputZeroPoint: Int,
     )
 }

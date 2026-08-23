@@ -119,6 +119,10 @@ android {
 
     packaging {
         jniLibs {
+            // KMK -->
+            useLegacyPackaging = true
+            // KMK <--
+
             keepDebugSymbols += listOf(
                 "libandroidx.graphics.path",
                 "libarchive-jni",

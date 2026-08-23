@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.graphics.Shader
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
 import com.google.ai.edge.litert.LiteRtException
 import exh.log.xLogD
 import exh.log.xLogW
@@ -35,7 +36,7 @@ class AiUpscaler(
     private val batchSize = variant.batchSize
 
     /** Hardware target to try when creating the CompiledModel, with GPU -> CPU fallback. */
-    private enum class DelegateMode { GPU, CPU }
+    private enum class DelegateMode { NPU, GPU, CPU }
 
     /** Side length of a tile produced by the model. */
     private val outSize get() = model.outSize
@@ -96,7 +97,7 @@ class AiUpscaler(
 
     /** Lazy CompiledModel initialization: tries GPU first, falls back to CPU if GPU is unavailable. */
     private val compiledModelLazy = lazy(LazyThreadSafetyMode.NONE) {
-        createCompiledModel(DelegateMode.GPU) ?: createCompiledModel(DelegateMode.CPU)!!
+        createCompiledModel(DelegateMode.NPU) ?: createCompiledModel(DelegateMode.GPU) ?: createCompiledModel(DelegateMode.CPU)!!
     }
     private val compiledModel by compiledModelLazy
 
@@ -115,14 +116,20 @@ class AiUpscaler(
      */
     private fun createCompiledModel(mode: DelegateMode): CompiledModel? {
         val accelerator = when (mode) {
+            DelegateMode.NPU -> Accelerator.NPU
             DelegateMode.GPU -> Accelerator.GPU
             DelegateMode.CPU -> Accelerator.CPU
         }
 
         return try {
+            val env = Environment.create(
+                context,
+                mapOf(Environment.Option.DispatchLibraryDir to context.applicationInfo.nativeLibraryDir),
+            )
             val newModel = CompiledModel.create(
                 modelFilePath(),
                 CompiledModel.Options(accelerator),
+                env
             )
             xLogD("CompiledModel created with accelerator=$accelerator, batch=$batchSize")
             newModel
@@ -132,30 +139,35 @@ class AiUpscaler(
         }
     }
 
-    /** Absolute filesystem path of the bundled .tflite file for the current variant. */
+    /**
+    * Absolute filesystem path of the .tflite file to load.
+    *
+    * TEMPORARY: bypasses 'variant.assetFileName' and the normal download/cache flow, loading a
+    * fixed test file straight from assets instead. Keep as-is until the litert_torch export is
+    * finalized and wired into UpscaleModel's real per-variant asset list.
+    */
     private fun modelFilePath(): String {
         //return File(context.filesDir, "models/${variant.assetFileName}").absolutePath
-        val testFileName = "realesr_animevideov3_x4_384T_static.tflite" // Nome del tuo file in assets
+        val testFileName = "realesr_animevideov3_x4_384T_QINT8.tflite"
         val targetFile = File(context.cacheDir, testFileName)
 
         try {
-            // Copiamo SEMPRE per assicurarci di non usare un file corrotto in cache
+            // Always re-copy, to avoid accidentally testing against a stale cached file.
             context.assets.open(testFileName).use { input ->
                 targetFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
             }
             val sizeKb = targetFile.length() / 1024
-            xLogD("Modello copiato con successo. Dimensione in cache: $sizeKb KB")
+            xLogD("Model copied successfully. Cache size: $sizeKb KB")
 
             if (sizeKb < 100) {
-                xLogW("ATTENZIONE: Il modello è troppo piccolo ($sizeKb KB)! Probabilmente non è valido.")
+                xLogW("WARNING: model is suspiciously small ($sizeKb KB), likely invalid.")
             }
         } catch (e: Exception) {
-            xLogW("Errore durante la copia del file da assets", e)
+            xLogW("Failed to copy model file from assets", e)
         }
 
-        // Copia il file dagli assets alla cache dell'app solo se non esiste già
         return targetFile.absolutePath
     }
 
@@ -269,35 +281,67 @@ class AiUpscaler(
         val tilePixelCount = paddedTileSize * paddedTileSize
         for (i in tiles.indices) {
             val arrayOffset = i * tilePixelCount
-            if (inputLayout == TensorLayout.NHWC) {
-                NativePixelOps.writeBitmapToArrayNHWC(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
-            } else {
-                NativePixelOps.writeBitmapToArrayNCHW(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
-            }
+//            if (inputLayout == TensorLayout.NHWC) {
+//                NativePixelOps.writeBitmapToArrayNHWC(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
+//            } else {
+//                NativePixelOps.writeBitmapToArrayNCHW(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
+//            }
+            NativePixelOps.writeBitmapToArrayNCHW(tiles[i], batchInputArray, arrayOffset, paddedTileSize)
         }
         val t1 = System.currentTimeMillis()
 
-        // LiteRT CompiledModel run
-        inputBuffers[0].writeFloat(batchInputArray)
+        val tQ0 = System.currentTimeMillis()
+        quantizeToInt8(batchInputArray, batchInputInt8Array)
+        val tQ1 = System.currentTimeMillis()
+
+        inputBuffers[0].writeInt8(batchInputInt8Array)
         compiledModel.run(inputBuffers, outputBuffers)
-        val outputArray = outputBuffers[0].readFloat()
+        val tRun = System.currentTimeMillis()
+
+        val outputInt8Array = outputBuffers[0].readInt8()
+        val tRead = System.currentTimeMillis()
+
+        xLogD("Quantize: ${tQ1 - tQ0}ms | writeInt8+run(): ${tRun - tQ1}ms | readInt8: ${tRead - tRun}ms")
+
+        // LiteRT CompiledModel run
+        //inputBuffers[0].writeFloat(batchInputArray)
+
+        //compiledModel.run(inputBuffers, outputBuffers)
+        //val outputArray = outputBuffers[0].readFloat()
         val t2 = System.currentTimeMillis()
 
-        // Native C++ read from the FloatArray into reusable Bitmaps
-        // NUOVA LOGICA: il modello restituisce [Batch, paddedTileSize, paddedTileSize, 3 * scale^2]
-        // Il PixelShuffle viene fatto on-the-fly dalla CPU in C++
+        // Native C++ read from the FloatArray into reusable Bitmaps.
+        // The model output is the raw pre-PixelShuffle tensor (3 * scale^2 channels);
+        // PixelShuffle and the residual skip connection are applied here in native code
+        // instead of in the model graph (see native-lib.cpp for why).
+//        for (i in tiles.indices) {
+//            val arrayOffset = i * tilePixelCount
+//
+//            NativePixelOps.readArrayToBitmapPixelShuffle(
+//                outArray = outputArray,
+//                inArray = batchInputArray,
+//                arrayPixelOffset = arrayOffset,
+//                targetBitmap = reusableOutputTiles[i],
+//                inTileSize = paddedTileSize,
+//                scale = model.scale,
+//                isInputNhwc = inputLayout == TensorLayout.NHWC,
+//                isOutputNhwc = outputLayout == TensorLayout.NHWC,
+//            )
+//        }
         for (i in tiles.indices) {
             val arrayOffset = i * tilePixelCount
 
-            NativePixelOps.readArrayToBitmapPixelShuffle(
-                outArray = outputArray,
+            NativePixelOps.readArrayToBitmapPixelShuffleInt8(
+                outArray = outputInt8Array,
                 inArray = batchInputArray,
                 arrayPixelOffset = arrayOffset,
                 targetBitmap = reusableOutputTiles[i],
                 inTileSize = paddedTileSize,
                 scale = model.scale,
-                isInputNhwc = (inputLayout == TensorLayout.NHWC),
-                isOutputNhwc = (outputLayout == TensorLayout.NHWC)
+                isInputNhwc = inputLayout == TensorLayout.NHWC,
+                isOutputNhwc = outputLayout == TensorLayout.NHWC,
+                outputScale = outputQuantScale,
+                outputZeroPoint = outputQuantZeroPoint,
             )
         }
         val t3 = System.currentTimeMillis()
@@ -311,5 +355,23 @@ class AiUpscaler(
     fun close() {
         if (compiledModelLazy.isInitialized()) compiledModel.close()
         inferenceExecutor.shutdown()
+    }
+
+    // TEMPORARY: hardcoded quantization params for the int8 test export, read via
+    // interp.get_input_details()/get_output_details() in Python. Move onto UpscaleModel
+    // once the quantized pipeline is finalized and per-model params are known.
+    private val inputQuantScale = 0.003919653594493866f
+    private val inputQuantZeroPoint = -128
+    private val outputQuantScale = 0.005565896164625883f
+    private val outputQuantZeroPoint = 2
+
+    private val batchInputInt8Array by lazy { ByteArray(batchSize * paddedTileSize * paddedTileSize * 3) }
+
+    /** Quantizes 'src' (float, [0, 1] range) into 'dst' (int8) using the model's input scale/zero-point. */
+    private fun quantizeToInt8(src: FloatArray, dst: ByteArray) {
+        for (i in src.indices) {
+            val q = Math.round(src[i] / inputQuantScale) + inputQuantZeroPoint
+            dst[i] = q.coerceIn(-128, 127).toByte()
+        }
     }
 }
